@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import curses
+import math
+import re
 import threading
 import time
 from collections import defaultdict, deque
@@ -67,6 +69,8 @@ class App:
         self.filter = ""
         self.searching = False
         self.show_help = False
+        self.show_cores = False
+        self.core_offset = 0
         self.row = 0
         self.offset = 0
         self.history: dict[str, deque[float]] = defaultdict(lambda: deque(maxlen=28))
@@ -136,6 +140,58 @@ class App:
             return sorted(processes, key=lambda p: p.pid)
         return sorted(processes, key=lambda p: p.name.casefold())
 
+    def _core_rows(self, gpu: GPU) -> list[tuple[str, float | None]]:
+        readings = {}
+        for name, value in gpu.core_utilization.items():
+            match = re.fullmatch(r"(?:GPU|Shader) Core (\d+) Utilization %", name)
+            if match:
+                readings[int(match.group(1))] = value
+        if gpu.core_count:
+            first = 0 if 0 in readings else 1
+            return [(f"Core {index:02d}", readings.get(index))
+                    for index in range(first, first + gpu.core_count)]
+        return [(name, value) for name, value in sorted(gpu.core_utilization.items())]
+
+    def _draw_cores(self, gpu: GPU | None, y: int, height: int, width: int) -> None:
+        if gpu is None:
+            self.line(y, " No GPU selected", self.color(3))
+            return
+        cores = self._core_rows(gpu)
+        self.line(y, f" GPU cores ({len(cores)})  c collapse", self.color(1, True))
+        y += 1
+        measured = sum(value is not None for _, value in cores)
+        if measured == 0:
+            note = " Per-core usage unavailable; -- means no reading."
+        else:
+            note = f" Measured per-core utilization: {measured}/{len(cores)}"
+        self.line(y, note, self.color(3))
+        y += 1
+        if not cores:
+            self.line(y, " Core count and per-core readings unavailable.", self.color(3))
+            return
+        cell_width = 26
+        columns = max(1, width // cell_width)
+        total_rows = math.ceil(len(cores) / columns)
+        visible_rows = max(0, height - 3 - y)
+        self.core_offset = min(max(0, self.core_offset), max(0, total_rows - visible_rows))
+        bar_width = cell_width - 19
+        for row in range(self.core_offset, min(total_rows, self.core_offset + visible_rows)):
+            for col in range(columns):
+                index = row * columns + col
+                if index >= len(cores):
+                    break
+                label, value = cores[index]
+                value = clamp(value)
+                filled = round(bar_width * value / 100) if value is not None else 0
+                bar = ("█" * filled + "·" * (bar_width - filled)) if value is not None else "-" * bar_width
+                percent = f"{value:5.1f}%" if value is not None else "   -- "
+                self.put(y + row - self.core_offset, col * cell_width,
+                         f" {label:<7} [{bar}] {percent}", self.color(2 if value is not None else 6))
+        if total_rows > visible_rows:
+            self.line(height - 3,
+                      f" Core rows {self.core_offset + 1}-{min(total_rows, self.core_offset + visible_rows)}"
+                      f"/{total_rows}  ↑↓/PgUp/PgDn scroll", self.color(3))
+
     def draw(self) -> None:
         self.screen.erase()
         snapshot = self.sampler.snapshot
@@ -177,39 +233,56 @@ class App:
                 y += 1
                 self.bar(y, "GPU", gpu.utilization, width, 2 if (gpu.utilization or 0) < 80 else 3)
                 y += 1
-                self.bar(y, "Memory", gpu.memory_utilization if gpu.memory_utilization is not None else
-                         (gpu.memory_used / gpu.memory_total * 100 if gpu.memory_total and gpu.memory_used is not None else None), width, 5)
-                y += 1
-                mem_label = f"{size(gpu.memory_used)}/{size(gpu.memory_total)}"
-                fields = [f"{'Unified' if gpu.vendor == 'Apple' else 'VRAM'} {mem_label}"]
-                if gpu.core_count is not None:
-                    core_label = f"{gpu.core_count} cores"
-                    if gpu.core_equivalent_load is not None:
-                        core_label += f" / {gpu.core_equivalent_load:.1f} eq est"
-                    fields.append(core_label)
-                if gpu.temperature is not None:
-                    fields.append(f"{gpu.temperature:.0f}°C")
-                if gpu.power_w is not None:
-                    power = (f"{gpu.power_w:.0f}/{gpu.power_limit_w:.0f}W" if gpu.power_limit_w is not None
-                             else f"{gpu.power_w:.0f}W")
-                    fields.append(power)
-                if gpu.clock_mhz is not None:
-                    fields.append(f"{gpu.clock_mhz:.0f}MHz")
-                if gpu.fan_percent is not None:
-                    fields.append(f"{gpu.fan_percent:.0f}% fan")
-                self.line(y, "  " + "  ·  ".join(fields), self.color(2))
-                y += 1
-                engines = "   ".join(f"{name} {value:.0f}%" for name, value in list(gpu.engines.items())[:5])
-                self.line(y, " Engines  " + (engines or "--"), self.color(3))
-                y += 1
-                history = "".join("▁▂▃▄▅▆▇█"[min(7, int(v / 12.5))] for v in self.history[gpu.id])
-                if gpu.core_utilization:
-                    cores = "  ".join(f"{name} {value:.0f}%" for name, value in list(gpu.core_utilization.items())[:6])
-                    self.line(y, " Cores  " + cores, self.color(2))
+                if self.show_cores:
+                    estimate = (f"  ·  {gpu.core_equivalent_load:.1f}/{gpu.core_count} core eq est"
+                                if gpu.core_equivalent_load is not None and gpu.core_count else "")
+                    self.line(y, f" Aggregate GPU load{estimate}", self.color(2))
+                    y += 1
                 else:
-                    self.line(y, " History  " + history, self.color(2))
-                y += 1
+                    self.bar(y, "Memory", gpu.memory_utilization if gpu.memory_utilization is not None else
+                             (gpu.memory_used / gpu.memory_total * 100 if gpu.memory_total and gpu.memory_used is not None else None), width, 5)
+                    y += 1
+                    mem_label = f"{size(gpu.memory_used)}/{size(gpu.memory_total)}"
+                    fields = [f"{'Unified' if gpu.vendor == 'Apple' else 'VRAM'} {mem_label}"]
+                    if gpu.core_count is not None:
+                        core_label = f"{gpu.core_count} cores"
+                        if gpu.core_equivalent_load is not None:
+                            core_label += f" / {gpu.core_equivalent_load:.1f} eq est"
+                        fields.append(core_label)
+                    if gpu.temperature is not None:
+                        fields.append(f"{gpu.temperature:.0f}°C")
+                    if gpu.power_w is not None:
+                        power = (f"{gpu.power_w:.0f}/{gpu.power_limit_w:.0f}W" if gpu.power_limit_w is not None
+                                 else f"{gpu.power_w:.0f}W")
+                        fields.append(power)
+                    if gpu.clock_mhz is not None:
+                        fields.append(f"{gpu.clock_mhz:.0f}MHz")
+                    if gpu.fan_percent is not None:
+                        fields.append(f"{gpu.fan_percent:.0f}% fan")
+                    self.line(y, "  " + "  ·  ".join(fields), self.color(2))
+                    y += 1
+                    engines = "   ".join(f"{name} {value:.0f}%" for name, value in list(gpu.engines.items())[:5])
+                    self.line(y, " Engines  " + (engines or "--"), self.color(3))
+                    y += 1
+                    history = "".join("▁▂▃▄▅▆▇█"[min(7, int(v / 12.5))] for v in self.history[gpu.id])
+                    if gpu.core_utilization:
+                        cores = "  ".join(f"{name} {value:.0f}%" for name, value in list(gpu.core_utilization.items())[:6])
+                        self.line(y, " Cores  " + cores, self.color(2))
+                    else:
+                        self.line(y, " History  " + history, self.color(2))
+                    y += 1
         y += 1
+        if self.show_cores:
+            self._draw_cores(gpu, y, height, width)
+            if self.searching:
+                self.line(height - 2, " Search: " + self.filter + "_", self.color(3, True))
+            elif self.show_help:
+                self.line(height - 2, " c cores  Tab GPU  ↑↓/PgUp/PgDn scroll  +/- speed  Space pause  q quit", self.color(3))
+            else:
+                self.line(height - 2, " c cores  Tab GPU  ↑↓/PgUp/PgDn scroll  Space pause  ? help  q quit", self.color(6))
+            self.line(height - 1, " F1 Help    F5 Refresh    F10 Quit", curses.A_REVERSE)
+            self.screen.refresh()
+            return
         processes = self._processes(snapshot, gpu)
         self.line(y, f" Processes ({len(processes)})" + (f"  filter: {self.filter}" if self.filter else ""), self.color(1, True))
         y += 1
@@ -250,9 +323,9 @@ class App:
         if self.searching:
             self.line(height - 2, " Search: " + self.filter + "_", self.color(3, True))
         elif self.show_help:
-            self.line(height - 2, " Tab GPU  a all  s sort  / search  ↑↓ select  +/- speed  1-6 presets  Space pause  q quit", self.color(3))
+            self.line(height - 2, " Tab GPU  c cores  a all  s sort  / search  ↑↓ select  +/- speed  Space pause  q quit", self.color(3))
         else:
-            self.line(height - 2, " Tab GPU  a all  s sort  / search  ↑↓ select  +/- speed  ? help  q quit", self.color(6))
+            self.line(height - 2, " Tab GPU  c cores  a all  s sort  / search  ↑↓ select  +/- speed  ? help  q quit", self.color(6))
         self.line(height - 1, " F1 Help    F2 Sort    F3 Search    F4 All GPUs    F5 Refresh    F10 Quit", curses.A_REVERSE)
         self.screen.refresh()
 
@@ -271,9 +344,14 @@ class App:
         if key in (9, curses.KEY_RIGHT):
             self.gpu_index += 1
             self.row = self.offset = 0
+            self.core_offset = 0
         elif key == curses.KEY_LEFT:
             self.gpu_index -= 1
             self.row = self.offset = 0
+            self.core_offset = 0
+        elif key in (ord("c"), ord("C")):
+            self.show_cores = not self.show_cores
+            self.core_offset = 0
         elif key in (ord("a"), curses.KEY_F4):
             self.all_gpus = not self.all_gpus
             self.row = self.offset = 0
@@ -285,13 +363,25 @@ class App:
         elif key in (ord("?"), curses.KEY_F1):
             self.show_help = not self.show_help
         elif key in (curses.KEY_DOWN, ord("j")):
-            self.row += 1
+            if self.show_cores:
+                self.core_offset += 1
+            else:
+                self.row += 1
         elif key in (curses.KEY_UP, ord("k")):
-            self.row -= 1
+            if self.show_cores:
+                self.core_offset = max(0, self.core_offset - 1)
+            else:
+                self.row -= 1
         elif key == curses.KEY_NPAGE:
-            self.row += 10
+            if self.show_cores:
+                self.core_offset += 8
+            else:
+                self.row += 10
         elif key == curses.KEY_PPAGE:
-            self.row -= 10
+            if self.show_cores:
+                self.core_offset = max(0, self.core_offset - 8)
+            else:
+                self.row -= 10
         elif key == ord(" "):
             self.sampler.paused = not self.sampler.paused
             self.sampler.refresh()

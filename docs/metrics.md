@@ -12,10 +12,11 @@ GPU telemetry is uneven. A blank sensor on one card may work on another card wit
 | GPU ms/s | Milliseconds of GPU execution time charged to the process per second, when a source provides it. 100 ms/s is about 10% of one GPU-time stream. |
 | GPU time | On Apple Silicon, cumulative GPU execution time recorded for the selected process's current Metal clients. |
 | Core eq est | GPU core count × overall GPU busy fraction. Four core equivalents on an eight-core GPU means roughly half of its aggregate capacity was busy; it does **not** identify which four cores worked. |
+| Core view (`c`) | Individual core percentages when the driver exposes them. `--` means there is no reading for that core. Arrow keys and Page Up/Page Down scroll longer lists. |
 
 These counters use different sampling windows. The device percentage and the sum of process percentages will not always match, especially while load is changing. Short intervals are more responsive but noisier. The top line shows the requested period and the period actually achieved.
 
-On Apple Silicon, the AGX registry exposes a GPU core count and aggregate utilization. It does not give gputop a live busy percentage for each physical shader core. Apple offers [shader-core profiling in Xcode](https://developer.apple.com/documentation/xcode/analyzing-the-performance-of-your-metal-app/) for an application's own work; that is different from a system-wide per-core monitor.
+On the Apple Silicon Mac tested here, the AGX registry exposes a GPU core count and aggregate utilization but no live busy percentage for each physical shader core. The expanded core view shows the cores with `--` in that case. If another driver exposes per-core utilization counters, the view shows those readings. Apple offers [shader-core profiling in Xcode](https://developer.apple.com/documentation/xcode/analyzing-the-performance-of-your-metal-app/) for an application's own work; that is different from a system-wide per-core monitor.
 
 ## Memory and sensors
 
