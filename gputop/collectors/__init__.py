@@ -1,0 +1,1 @@
+"""Platform and vendor collectors."""

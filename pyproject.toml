@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gputop"
+version = "0.2.0"
+description = "A cross-platform, htop-inspired GPU monitor"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [{name = "gputop contributors"}]
+keywords = ["gpu", "monitor", "tui", "nvidia", "amd", "intel", "apple-silicon"]
+
+[project.optional-dependencies]
+windows = ["windows-curses>=2.4"]
+
+[project.scripts]
+gputop = "gputop.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["gputop*"]
