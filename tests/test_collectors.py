@@ -14,8 +14,10 @@ class NvidiaTests(unittest.TestCase):
     def test_gpu_and_compute_process(self) -> None:
         gpu_csv = "0, GPU-1, NVIDIA RTX, 00000000:01:00.0, 42, 12, 2048, 8192, 63, 150, 250, 44, 1800\n"
         proc_csv = "GPU-1, 1234, python, 1024\n"
-        with patch.object(nvidia.shutil, "which", return_value="/bin/nvidia-smi"), \
-             patch.object(nvidia, "command", side_effect=[gpu_csv, proc_csv]):
+        with (
+            patch.object(nvidia.shutil, "which", return_value="/bin/nvidia-smi"),
+            patch.object(nvidia, "command", side_effect=[gpu_csv, proc_csv]),
+        ):
             gpus, processes = nvidia.collect()
         self.assertEqual(len(gpus), 1)
         self.assertEqual(gpus[0].utilization, 42)
@@ -45,13 +47,17 @@ class LinuxTests(unittest.TestCase):
             (process / "comm").write_text("render-app\n")
             (process / "fd" / "7").symlink_to("/dev/dri/renderD128")
             fdinfo = process / "fdinfo" / "7"
-            fdinfo.write_text("drm-client-id:\t9\ndrm-engine-render:\t100000000 ns\n"
-                              "drm-memory-local:\t1024 KiB\n")
+            fdinfo.write_text(
+                "drm-client-id:\t9\ndrm-engine-render:\t100000000 ns\n"
+                "drm-memory-local:\t1024 KiB\n"
+            )
             collector = linux.LinuxCollector(drm, proc)
             with patch.object(linux.time, "monotonic", return_value=10.0):
                 first_gpus, _ = collector.collect()
-            fdinfo.write_text("drm-client-id:\t9\ndrm-engine-render:\t600000000 ns\n"
-                              "drm-memory-local:\t1024 KiB\n")
+            fdinfo.write_text(
+                "drm-client-id:\t9\ndrm-engine-render:\t600000000 ns\n"
+                "drm-memory-local:\t1024 KiB\n"
+            )
             with patch.object(linux.time, "monotonic", return_value=11.0):
                 gpus, processes = collector.collect()
             self.assertIsNone(first_gpus[0].utilization)
@@ -78,14 +84,17 @@ class LinuxTests(unittest.TestCase):
                 (proc / "fd" / fd).symlink_to("/dev/dri/renderD128")
                 (proc / "fdinfo" / fd).write_text(
                     f"drm-client-id: {client}\ndrm-engine-render: 100000000 ns\n"
-                    "drm-memory-local: 0 KiB\n")
+                    "drm-memory-local: 0 KiB\n"
+                )
             collector = linux.LinuxCollector(root / "drm", root / "proc")
             with patch.object(linux.time, "monotonic", return_value=10.0):
                 collector.collect()
             for fd in ("7", "8"):
                 (proc / "fdinfo" / fd).write_text(
-                    "drm-client-id: " + ("9" if fd == "7" else "10") +
-                    "\ndrm-engine-render: 300000000 ns\ndrm-memory-local: 0 KiB\n")
+                    "drm-client-id: "
+                    + ("9" if fd == "7" else "10")
+                    + "\ndrm-engine-render: 300000000 ns\ndrm-memory-local: 0 KiB\n"
+                )
             with patch.object(linux.time, "monotonic", return_value=11.0):
                 gpus, processes = collector.collect()
             self.assertEqual(len(processes), 1)
@@ -95,21 +104,34 @@ class LinuxTests(unittest.TestCase):
 
 
 class MacTests(unittest.TestCase):
+    def setUp(self) -> None:
+        # Fixture tests must not read the host's Metal inventory or root-only utilities.
+        self.metal = patch.object(macos.metal, "adapters", return_value=[])
+        self.power = patch.object(macos.MacCollector, "_refresh_powermetrics")
+        self.metal.start()
+        self.power.start()
+        self.addCleanup(self.metal.stop)
+        self.addCleanup(self.power.stop)
+
     def test_fractional_core_readings_outside_performance_statistics(self) -> None:
         collector = macos.MacCollector()
         collector.devices = [{"_name": "Apple M5", "sppci_cores": "8"}]
         collector.last_discovery = macos.time.monotonic()
-        output = '''+-o AGXAcceleratorG17G  <class AGXAcceleratorG17G, id 0x100, active>
+        output = """+-o AGXAcceleratorG17G  <class AGXAcceleratorG17G, id 0x100, active>
   | "PerformanceStatistics" = {"Device Utilization %"=50}
   | "GPU Core 0 Utilization %" = 12.5
   | "Shader Core 1 Utilization %" = "0"
   | "gpu-core-count" = 8
-'''
-        with patch.object(macos, "command", return_value=output), \
-             patch.object(collector, "_refresh_process_info"):
+"""
+        with (
+            patch.object(macos, "command", return_value=output),
+            patch.object(collector, "_refresh_process_info"),
+        ):
             gpus, _ = collector.collect()
-        self.assertEqual(gpus[0].core_utilization,
-                         {"GPU Core 0 Utilization %": 12.5, "Shader Core 1 Utilization %": 0.0})
+        self.assertEqual(
+            gpus[0].core_utilization,
+            {"GPU Core 0 Utilization %": 12.5, "Shader Core 1 Utilization %": 0.0},
+        )
 
     def test_ioreg_stats_and_powermetrics_tasks(self) -> None:
         text = '  |   "PerformanceStatistics" = {"Device Utilization %"=32,"Renderer Utilization %"=30,"Tiler Utilization %"=12,"In use system memory"=4096}'
@@ -140,7 +162,8 @@ Name   ID    CPU ms/s   GPU ms/s
   | }
 """
         text2 = text1.replace("200000000", "500000000").replace(
-            '"accumulatedGPUTime"=100000000', '"accumulatedGPUTime"=300000000')
+            '"accumulatedGPUTime"=100000000', '"accumulatedGPUTime"=300000000'
+        )
         collector = macos.MacCollector()
         first = macos._agx_clients(text1)
         second = macos._agx_clients(text2)
@@ -155,13 +178,17 @@ Name   ID    CPU ms/s   GPU ms/s
 
     def test_single_intel_mac_uses_ioaccelerator_stats(self) -> None:
         collector = macos.MacCollector()
-        collector.devices = [{"_name": "Intel Iris Graphics", "spdisplays_vram": "1536 MB"}]
+        collector.devices = [
+            {"_name": "Intel Iris Graphics", "spdisplays_vram": "1536 MB"}
+        ]
         collector.last_discovery = macos.time.monotonic()
         output = """+-o IntelAccelerator  <class IntelAccelerator, id 0x100, active>
   | "PerformanceStatistics" = {"Device Utilization %"=37,"inUseSysMemoryBytes"=1048576,"Device Unit 0 Utilization %"=19}
 """
-        with patch.object(macos, "command", return_value=output), \
-             patch.object(collector, "_refresh_process_info"):
+        with (
+            patch.object(macos, "command", return_value=output),
+            patch.object(collector, "_refresh_process_info"),
+        ):
             gpus, processes = collector.collect()
         self.assertEqual(len(gpus), 1)
         self.assertEqual(gpus[0].utilization, 37)
@@ -172,15 +199,20 @@ Name   ID    CPU ms/s   GPU ms/s
 
     def test_intel_and_amd_macs_map_accelerators_by_vendor(self) -> None:
         collector = macos.MacCollector()
-        collector.devices = [{"_name": "Intel Iris Graphics"}, {"_name": "AMD Radeon Pro"}]
+        collector.devices = [
+            {"_name": "Intel Iris Graphics", "spdisplays_vendor": "Intel (0x8086)"},
+            {"_name": "AMD Radeon Pro", "spdisplays_vendor": "AMD (0x1002)"},
+        ]
         collector.last_discovery = macos.time.monotonic()
         output = """+-o AMDRadeonAccelerator  <class AMDRadeonAccelerator, id 0x100, active>
   | "PerformanceStatistics" = {"Device Utilization %"=72}
 +-o IntelAccelerator  <class IntelAccelerator, id 0x101, active>
   | "PerformanceStatistics" = {"Device Utilization %"=18}
 """
-        with patch.object(macos, "command", return_value=output), \
-             patch.object(collector, "_refresh_process_info"):
+        with (
+            patch.object(macos, "command", return_value=output),
+            patch.object(collector, "_refresh_process_info"),
+        ):
             gpus, _ = collector.collect()
         self.assertEqual(gpus[0].vendor, "Intel")
         self.assertEqual(gpus[0].utilization, 18)
@@ -193,8 +225,10 @@ Name   ID    CPU ms/s   GPU ms/s
   | "PerformanceStatistics" = {"Device Utilization %"=27}
   | "gpu-core-count" = 8
 """
-        with patch.object(macos, "command", side_effect=[None, output, None]), \
-             patch.object(collector, "_refresh_process_info"):
+        with (
+            patch.object(macos, "command", side_effect=[None, output, None]),
+            patch.object(collector, "_refresh_process_info"),
+        ):
             gpus, _ = collector.collect()
         self.assertEqual(gpus[0].vendor, "Apple")
         self.assertEqual(gpus[0].utilization, 27)
@@ -207,8 +241,18 @@ class WindowsTests(unittest.TestCase):
     def test_wddm_engine_and_process_name(self) -> None:
         payload = {
             "adapters": [{"Name": "Intel UHD Graphics", "DriverVersion": "1.2"}],
-            "engine": [{"Path": r"\gpu engine(pid_42_luid_0x00000000_0x00000001_phys_0_eng_0_engtype_3d)\utilization percentage", "Value": 47}],
-            "memory": [{"Path": r"\gpu process memory(pid_42_luid_0x00000000_0x00000001_phys_0)\dedicated usage", "Value": 1048576}],
+            "engine": [
+                {
+                    "Path": r"\gpu engine(pid_42_luid_0x00000000_0x00000001_phys_0_eng_0_engtype_3d)\utilization percentage",
+                    "Value": 47,
+                }
+            ],
+            "memory": [
+                {
+                    "Path": r"\gpu process memory(pid_42_luid_0x00000000_0x00000001_phys_0)\dedicated usage",
+                    "Value": 1048576,
+                }
+            ],
             "names": [{"Id": 42, "Name": "game.exe"}],
         }
         gpus, processes = windows.parse(payload)
@@ -227,10 +271,21 @@ class ManagerTests(unittest.TestCase):
         collector = Collector()
         collector.platform = "Linux"
         native_gpu = GPU("0000:01:00.0", "Unknown GPU", "NVIDIA", source="DRM")
-        collector.native = type("Native", (), {"collect": lambda self: ([native_gpu], [])})()
-        nv_gpu = GPU("00000000:01:00.0", "NVIDIA RTX", "NVIDIA", utilization=65, source="nvidia-smi")
+        collector.native = type(
+            "Native", (), {"collect": lambda self: ([native_gpu], [])}
+        )()
+        nv_gpu = GPU(
+            "00000000:01:00.0",
+            "NVIDIA RTX",
+            "NVIDIA",
+            utilization=65,
+            source="nvidia-smi",
+        )
         nv_proc = Process(7, "train", nv_gpu.id, "compute")
-        with patch("gputop.collectors.manager.nvidia.collect", return_value=([nv_gpu], [nv_proc])):
+        with patch(
+            "gputop.collectors.manager.nvidia.collect",
+            return_value=([nv_gpu], [nv_proc]),
+        ):
             snapshot = collector.collect()
         self.assertEqual(len(snapshot.gpus), 1)
         self.assertEqual(snapshot.gpus[0].utilization, 65)

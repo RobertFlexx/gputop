@@ -52,7 +52,9 @@ class Snapshot:
     warnings: list[str] = field(default_factory=list)
     sample_interval_s: float | None = None
     collection_duration_s: float | None = None
-    timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    timestamp: str = field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
 
     def as_dict(self) -> dict:
         return asdict(self)

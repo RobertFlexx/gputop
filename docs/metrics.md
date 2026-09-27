@@ -20,17 +20,25 @@ On the Apple Silicon Mac tested here, the AGX registry exposes a GPU core count 
 
 ## Memory and sensors
 
-The memory bar uses driver-reported GPU memory when both used and total are known. Apple GPUs share system RAM, so gputop shows the in-use amount without inventing a separate VRAM limit. “GPU Mem” in the process table means GPU memory attributed to that process. The selected-process detail may also show **RAM**, which is ordinary system memory and a different reading.
+The memory bar shows allocated capacity when both used and total are known. Memory-controller activity is a different measurement: it remains available as `memory_utilization` in JSON and is not substituted for occupied capacity. Apple GPUs share system RAM, so gputop shows the in-use amount without inventing a separate VRAM limit. “GPU Mem” in the process table means GPU memory attributed to that process. The selected-process detail may also show **RAM**, which is ordinary system memory and a different reading.
 
 Temperature, hotspot, memory temperature, power, power limit, fan and clock only appear if their source reports them. The JSON snapshot includes extra sensor fields even when the terminal is too narrow to show all of them.
+
+## Device type and multiple GPUs
+
+Device type is independent of vendor and display name. On Linux, `amdgpu` exposes an [APU/fusion flag](https://github.com/torvalds/linux/blob/master/include/uapi/drm/amdgpu_drm.h), which distinguishes AMD integrated GPUs from dedicated cards even when an APU reserves several GiB of memory. The query needs access to a DRM device node. Other Linux drivers and NVIDIA's command output may leave the type unknown when they do not provide usable classification metadata.
+
+On macOS, [Metal's `hasUnifiedMemory`](https://developer.apple.com/documentation/metal/mtldevice/hasunifiedmemory) supplies memory architecture. Each GPU is queried independently, so a Mac can have both an integrated GPU and a dedicated AMD GPU. Older devices can fall back to System Profiler's explicit shared-memory or VRAM fields. On Windows, [DXCore's `IsIntegrated`](https://learn.microsoft.com/en-us/windows/win32/api/dxcore_interface/ne-dxcore_interface-dxcoreadapterproperty) supplies the classification. If those APIs or properties are unavailable, gputop reports `unknown` rather than guessing from the name.
+
+Hardware identities keep devices and their processes separate even when the GPU names or process PIDs repeat. When an older inventory source cannot be matched to a counter group, both remain visible separately; they may describe the same physical GPU. The source/ID fields explain the distinction. Shared Linux DRM clients can appear under more than one PID, but device totals count each client once. Linux engine percentages also account for the driver's engine-capacity field.
 
 ## Where readings come from
 
 - **Apple Silicon:** `IOAccelerator` device statistics and `AGXDeviceUserClient` process counters. The latter report cumulative `accumulatedGPUTime` for each Metal client, which gputop samples twice to calculate a rate. This is an undocumented driver interface, so a macOS update could change it. The [metalps project](https://github.com/LoganBarnett/metalps) documents the same counters. `powermetrics` provides optional power, frequency and temperature values when run as root and when the OS reports them.
-- **Intel and AMD Macs:** `IOAccelerator` statistics when present. With an Intel GPU and an AMD GPU, gputop matches counters by vendor. It leaves ambiguous matches blank.
+- **Intel and AMD Macs:** `IOAccelerator` statistics when present, matched to Metal registry IDs. A unique vendor match is a fallback when IDs cannot be matched; ambiguous counter groups remain separate.
 - **Linux:** DRM/sysfs inventory and sensors. [DRM fdinfo](https://www.kernel.org/doc/html/latest/gpu/drm-usage-stats.html) supplies per-process engine time on supporting drivers; [amdgpu sysfs](https://docs.kernel.org/gpu/amdgpu/thermal.html) supplies busy, memory and hardware sensors. Reading other users' fdinfo may require permission.
 - **NVIDIA:** [`nvidia-smi`](https://docs.nvidia.com/deploy/nvidia-smi/) supplies device readings and compute-process memory across supported operating systems. Other process types may appear through the native Linux or Windows collector.
-- **Windows:** WDDM GPU Engine and GPU Process Memory counters. GPU engines use adapter LUIDs, which cannot always be matched safely to a device name on a multi-GPU machine. In that case gputop lists the counter group separately. The English counter paths may also be unavailable on localized Windows installations. [Microsoft's counter overview](https://learn.microsoft.com/en-us/windows/win32/direct3dtools/pix/articles/timing-captures/pix-timing-captures) explains the engine and memory counters.
+- **Windows:** WDDM GPU Engine and GPU Process Memory counters, matched to DXCore inventory by LUID. When DXCore is unavailable and the fallback inventory cannot establish a match, gputop lists the counter group separately. The English counter paths may also be unavailable on localized Windows installations. [Microsoft's counter overview](https://learn.microsoft.com/en-us/windows/win32/direct3dtools/pix/articles/timing-captures/pix-timing-captures) explains the engine and memory counters.
 
 ## When something is missing
 
