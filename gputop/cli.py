@@ -22,7 +22,7 @@ def main(argv: list[str] | None = None) -> int:
         "--interval",
         type=float,
         default=1.5,
-        help="Refresh interval in seconds (default: 1.5)",
+        help="Refresh interval in seconds, 0.1 to 60 (default: 1.5)",
     )
     parser.add_argument(
         "--json",
