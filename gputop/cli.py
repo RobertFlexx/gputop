@@ -14,7 +14,7 @@ from gputop.collectors.common import size
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="htop-inspired GPU monitor")
-    parser.add_argument("--interval", type=float, default=1.5, help="Refresh interval in seconds (default: 1.5)")
+    parser.add_argument("--interval", type=float, default=1.5, help="Refresh interval in seconds between 0.1 to 60 (default: 1.5)")
     parser.add_argument("--json", action="store_true", help="Print one machine-readable snapshot and exit")
     parser.add_argument("--once", action="store_true", help="Print one human-readable snapshot and exit")
     parser.add_argument("--demo", action="store_true", help="Show sample GPUs and processes")
