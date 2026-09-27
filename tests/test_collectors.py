@@ -58,10 +58,59 @@ class LinuxTests(unittest.TestCase):
             self.assertEqual(gpus[0].utilization, 50.0)
             self.assertEqual(gpus[0].engines["render"], 50.0)
             self.assertEqual(processes[0].memory_used, 1024**2)
-            self.assertEqual(processes[0].name, "render-app")
+        self.assertEqual(processes[0].name, "render-app")
+
+    def test_multiple_drm_clients_are_one_process_with_summed_usage(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            device = root / "drm" / "card0" / "device"
+            device.mkdir(parents=True)
+            (device / "vendor").write_text("0x8086")
+            (device / "uevent").write_text("PCI_SLOT_NAME=0000:00:02.0\n")
+            node = root / "drm" / "renderD128"
+            node.mkdir()
+            (node / "device").symlink_to(device)
+            proc = root / "proc" / "123"
+            (proc / "fd").mkdir(parents=True)
+            (proc / "fdinfo").mkdir()
+            (proc / "comm").write_text("render-app\n")
+            for fd, client in (("7", "9"), ("8", "10")):
+                (proc / "fd" / fd).symlink_to("/dev/dri/renderD128")
+                (proc / "fdinfo" / fd).write_text(
+                    f"drm-client-id: {client}\ndrm-engine-render: 100000000 ns\n"
+                    "drm-memory-local: 0 KiB\n")
+            collector = linux.LinuxCollector(root / "drm", root / "proc")
+            with patch.object(linux.time, "monotonic", return_value=10.0):
+                collector.collect()
+            for fd in ("7", "8"):
+                (proc / "fdinfo" / fd).write_text(
+                    "drm-client-id: " + ("9" if fd == "7" else "10") +
+                    "\ndrm-engine-render: 300000000 ns\ndrm-memory-local: 0 KiB\n")
+            with patch.object(linux.time, "monotonic", return_value=11.0):
+                gpus, processes = collector.collect()
+            self.assertEqual(len(processes), 1)
+            self.assertEqual(processes[0].utilization, 40)
+            self.assertEqual(processes[0].memory_used, 0)
+            self.assertEqual(gpus[0].utilization, 40)
 
 
 class MacTests(unittest.TestCase):
+    def test_fractional_core_readings_outside_performance_statistics(self) -> None:
+        collector = macos.MacCollector()
+        collector.devices = [{"_name": "Apple M5", "sppci_cores": "8"}]
+        collector.last_discovery = macos.time.monotonic()
+        output = '''+-o AGXAcceleratorG17G  <class AGXAcceleratorG17G, id 0x100, active>
+  | "PerformanceStatistics" = {"Device Utilization %"=50}
+  | "GPU Core 0 Utilization %" = 12.5
+  | "Shader Core 1 Utilization %" = "0"
+  | "gpu-core-count" = 8
+'''
+        with patch.object(macos, "command", return_value=output), \
+             patch.object(collector, "_refresh_process_info"):
+            gpus, _ = collector.collect()
+        self.assertEqual(gpus[0].core_utilization,
+                         {"GPU Core 0 Utilization %": 12.5, "Shader Core 1 Utilization %": 0.0})
+
     def test_ioreg_stats_and_powermetrics_tasks(self) -> None:
         text = '  |   "PerformanceStatistics" = {"Device Utilization %"=32,"Renderer Utilization %"=30,"Tiler Utilization %"=12,"In use system memory"=4096}'
         self.assertEqual(macos._stats(text)["Device Utilization %"], 32)
@@ -150,6 +199,8 @@ Name   ID    CPU ms/s   GPU ms/s
         self.assertEqual(gpus[0].vendor, "Apple")
         self.assertEqual(gpus[0].utilization, 27)
         self.assertEqual(gpus[0].core_count, 8)
+        self.assertEqual(gpus[0].core_utilization, {})
+        self.assertIn("no physical per-core utilization counters", gpus[0].notes[-2])
 
 
 class WindowsTests(unittest.TestCase):

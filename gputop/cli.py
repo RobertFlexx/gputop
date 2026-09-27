@@ -38,8 +38,12 @@ def main(argv: list[str] | None = None) -> int:
                 metrics = [name for name in ("utilization", "memory_used", "memory_total",
                                             "temperature", "power_w", "clock_mhz", "core_count")
                            if getattr(gpu, name) is not None]
+                if gpu.core_utilization:
+                    metrics.append("core_utilization")
                 print(f"GPU {gpu.id}: {gpu.name} [{gpu.vendor}] via {gpu.source}")
                 print("  Metrics:", ", ".join(metrics) or "inventory only")
+                if gpu.core_count is not None:
+                    print(f"  Individual GPU cores: {len(gpu.core_utilization)}/{gpu.core_count} measured")
                 print(f"  Processes: {sum(p.gpu_id == gpu.id for p in snapshot.processes)}")
                 for note in gpu.notes:
                     print("  Note:", note)
@@ -56,6 +60,8 @@ def main(argv: list[str] | None = None) -> int:
                          if gpu.core_equivalent_load is not None and gpu.core_count else "")
                 print(f"{gpu.name} [{gpu.id}]  GPU {usage}  {memory_label} "
                       f"{size(gpu.memory_used)}/{size(gpu.memory_total)}  {temp}{cores}")
+                for name, value in sorted(gpu.core_utilization.items()):
+                    print(f"  {name}: {value:.1f}%")
             for process in sorted(snapshot.processes, key=lambda p: p.utilization or 0, reverse=True):
                 usage = f"{process.utilization:.1f}%" if process.utilization is not None else "--"
                 gpu_ms = f"{process.gpu_time_ms_s:.1f}ms/s" if process.gpu_time_ms_s is not None else "--"

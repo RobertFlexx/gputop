@@ -115,7 +115,11 @@ class LinuxCollector:
         now = time.monotonic()
         elapsed = now - self.last_time if self.last_time is not None else None
         counters: dict[tuple[int, str, str, str], int] = {}
-        processes: list[Process] = []
+        process_engines: dict[tuple[int, str], set[str]] = {}
+        process_deltas: dict[tuple[int, str, str], int] = {}
+        process_memory: dict[tuple[int, str], int] = {}
+        process_names: dict[int, str] = {}
+        process_rss: dict[int, int] = {}
         engine_sums: dict[tuple[str, str], int] = {}
         for proc in self.proc_root.iterdir() if self.proc_root.exists() else []:
             if not proc.name.isdigit():
@@ -147,8 +151,11 @@ class LinuxCollector:
                 memory_keys = [key for key in info if key.startswith("drm-resident-")]
                 if not memory_keys:
                     memory_keys = [key for key in info if key.startswith("drm-memory-")]
-                memory = sum(_bytes(info[key]) or 0 for key in memory_keys)
-                engines: dict[str, float] = {}
+                process_key = (pid, gpu_id)
+                process_engines.setdefault(process_key, set())
+                if memory_keys:
+                    process_memory[process_key] = process_memory.get(process_key, 0) + sum(
+                        _bytes(info[key]) or 0 for key in memory_keys)
                 for key, value in info.items():
                     if not key.startswith("drm-engine-"):
                         continue
@@ -156,22 +163,30 @@ class LinuxCollector:
                     counter = _bytes(value)
                     if counter is None:
                         continue
+                    process_engines[process_key].add(engine)
                     counter_key = (pid, gpu_id, client_id, engine)
                     counters[counter_key] = counter
                     old = self.previous.get(counter_key)
                     if old is not None and elapsed and elapsed > 0 and counter >= old:
                         delta = counter - old
-                        engines[engine] = clamp(delta / (elapsed * 1_000_000_000) * 100) or 0
+                        delta_key = (pid, gpu_id, engine)
+                        process_deltas[delta_key] = process_deltas.get(delta_key, 0) + delta
                         engine_sums[(gpu_id, engine)] = engine_sums.get((gpu_id, engine), 0) + delta
-                name = read(proc / "comm") or f"pid {pid}"
-                status = read(proc / "status") or ""
-                rss = re.search(r"^VmRSS:\s*(\d+)\s+kB", status, re.M)
-                processes.append(Process(pid, name, gpu_id, ",".join(engines) or "DRM",
-                                         max(engines.values()) if engines else None,
-                                         memory if memory else None, "DRM fdinfo",
-                                         system_memory_used=int(rss.group(1)) * 1024 if rss else None))
+                if pid not in process_names:
+                    process_names[pid] = read(proc / "comm") or f"pid {pid}"
+                    status = read(proc / "status") or ""
+                    rss = re.search(r"^VmRSS:\s*(\d+)\s+kB", status, re.M)
+                    if rss:
+                        process_rss[pid] = int(rss.group(1)) * 1024
         self.previous = counters
         self.last_time = now
+        processes: list[Process] = []
+        for (pid, gpu_id), engines in process_engines.items():
+            rates = [clamp(process_deltas[(pid, gpu_id, engine)] / (elapsed * 1_000_000_000) * 100)
+                     for engine in engines if elapsed and elapsed > 0 and (pid, gpu_id, engine) in process_deltas]
+            processes.append(Process(pid, process_names[pid], gpu_id, ",".join(sorted(engines)) or "DRM",
+                                     max(rates) if rates else None, process_memory.get((pid, gpu_id)),
+                                     "DRM fdinfo", system_memory_used=process_rss.get(pid)))
         for (gpu_id, engine), ns in engine_sums.items():
             if elapsed and elapsed > 0:
                 by_id[gpu_id].engines[engine] = clamp(ns / (elapsed * 1_000_000_000) * 100) or 0

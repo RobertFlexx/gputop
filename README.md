@@ -49,7 +49,7 @@ For scripts, use `--once` for a text snapshot or `--json` for structured data. B
 
 - `--` means the OS or driver did not provide that reading. It does not mean zero.
 - Apple Silicon process GPU time comes from AGX driver counters and works without root on the macOS version tested here. GPU power and clock readings from `powermetrics` need root access.
-- The Apple GPU core count is real; the “core eq est” number is an **estimate from total GPU load**. Press `c` to see individual core readings when the driver reports them. On the Apple Silicon Mac tested here, macOS reports only aggregate load, so the core view shows `--` for each core rather than inventing values.
+- The Apple GPU core count is real; the “core eq est” number is an **estimate from total GPU load**. Press `c` to see individual core readings when the driver reports them. On the Apple Silicon Mac tested here, IOKit reports only aggregate load, so the core view shows `--` for each core. `--doctor` reports how many individual cores have measured readings, and `--json` exposes those readings in `core_utilization`.
 - NVIDIA process data from `nvidia-smi` covers compute jobs. Linux DRM and Windows WDDM can also show graphics processes when their counters are available.
 
 See [metric and platform notes](docs/metrics.md) if a value looks odd or a process is missing.

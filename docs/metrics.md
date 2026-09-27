@@ -16,7 +16,7 @@ GPU telemetry is uneven. A blank sensor on one card may work on another card wit
 
 These counters use different sampling windows. The device percentage and the sum of process percentages will not always match, especially while load is changing. Short intervals are more responsive but noisier. The top line shows the requested period and the period actually achieved.
 
-On the Apple Silicon Mac tested here, the AGX registry exposes a GPU core count and aggregate utilization but no live busy percentage for each physical shader core. The expanded core view shows the cores with `--` in that case. If another driver exposes per-core utilization counters, the view shows those readings. Apple offers [shader-core profiling in Xcode](https://developer.apple.com/documentation/xcode/analyzing-the-performance-of-your-metal-app/) for an application's own work; that is different from a system-wide per-core monitor.
+On the Apple Silicon Mac tested here, the AGX registry exposes a GPU core count and aggregate utilization but no live busy percentage for each physical shader core. The expanded core view shows the cores with `--` in that case. If another driver exposes named per-core utilization counters, the view, `--once`, and `--json` show those readings; `--doctor` reports the measured count. Apple offers [shader-core profiling in Xcode](https://developer.apple.com/documentation/xcode/analyzing-the-performance-of-your-metal-app/) for an application's own work; that is different from a system-wide per-core monitor.
 
 ## Memory and sensors
 

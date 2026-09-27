@@ -38,6 +38,20 @@ def _stats(text: str) -> dict[str, int]:
             re.findall(r'"([^"]+)"\s*=\s*(\d+)', match.group(1))}
 
 
+def _core_stats(text: str) -> dict[str, float]:
+    """Read actual per-core percentages, including fractional driver readings.
+
+    Some drivers publish these outside PerformanceStatistics, so search the
+    accelerator's properties rather than only that dictionary. IOReportLegend
+    channel names alone are not readings and have no numeric assignment.
+    """
+    result: dict[str, float] = {}
+    pattern = r'"((?:GPU|Shader) Core \d+ Utilization %)"\s*=\s*"?([\d]+(?:\.[\d]+)?)"?'
+    for name, value in re.findall(pattern, text):
+        result[name] = clamp(float(value)) or 0.0
+    return result
+
+
 def _accelerators(text: str) -> list[tuple[str, str]]:
     starts = list(re.finditer(r"(?m)^\+-o\s+(\S+)\s+<class ", text))
     result = []
@@ -258,16 +272,16 @@ class MacCollector:
                 gpu.memory_used = stats.get("In use system memory")
                 count = re.search(r'"gpu-core-count"\s*=\s*(\d+)', segment)
                 gpu.core_count = gpu.core_count or integer(count.group(1) if count else None)
-                gpu.core_utilization = {key: float(value) for key, value in stats.items()
-                                        if re.fullmatch(r"(?:GPU|Shader) Core \d+ Utilization %", key)}
+                gpu.core_utilization = _core_stats(segment)
                 gpu.notes.append("Unified memory is shared with the CPU.")
+                if gpu.core_count and not gpu.core_utilization:
+                    gpu.notes.append("IOKit exposes GPU core count, but no physical per-core utilization counters.")
                 clients.extend(_agx_clients(segment))
             else:
                 gpu.memory_used = stats.get("inUseVidMemoryBytes") or stats.get("inUseSysMemoryBytes")
                 gpu.engines = {name: float(value) for name, value in stats.items()
                                if re.fullmatch(r"Device Unit \d+ Utilization %", name)}
-                gpu.core_utilization = {key: float(value) for key, value in stats.items()
-                                        if re.fullmatch(r"(?:GPU|Shader) Core \d+ Utilization %", key)}
+                gpu.core_utilization = _core_stats(segment)
                 gpu_index = int(gpu.id.split(":")[-1])
                 vram = str(self.devices[gpu_index].get("spdisplays_vram") or "") if gpu_index < len(self.devices) else ""
                 capacity = re.search(r"([\d.]+)\s*(GB|MB)", vram, re.I)
