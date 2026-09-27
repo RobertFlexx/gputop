@@ -11,7 +11,10 @@ from gputop.model import GPU, Process
 
 SYS_DRM = Path("/sys/class/drm")
 PROC = Path("/proc")
-VENDORS = {"0x1002": "AMD", "0x8086": "Intel", "0x10de": "NVIDIA", "0x106b": "Apple"}
+VENDORS = {"0x1002": "AMD",
+           "0x8086": "Intel",
+           "0x10de": "NVIDIA",
+           "0x106b": "Apple"}
 
 
 def _value(path: Path, divisor: float = 1.0) -> float | None:
@@ -59,6 +62,10 @@ def _gpu_cards(root: Path) -> list[GPU]:
             name = f"{vendor} GPU {read(device / 'device') or card.name}"
         vram_total = _value(device / "mem_info_vram_total")
         vram_used = _value(device / "mem_info_vram_used")
+
+        vram_total = int(vram_total) if vram_total is not None else None
+        vram_used = int(vram_used) if vram_used is not None else None
+
         kind = (
             "dedicated"
             if vram_total and vram_total > 1024**3
@@ -73,8 +80,8 @@ def _gpu_cards(root: Path) -> list[GPU]:
             source="Linux DRM/sysfs",
             utilization=clamp(_value(device / "gpu_busy_percent")),
             memory_utilization=clamp(_value(device / "mem_busy_percent")),
-            memory_used=int(vram_used) if vram_used is not None else None,
-            memory_total=int(vram_total) if vram_total is not None else None,
+            memory_used=vram_used,
+            memory_total=vram_total,
         )
         gpu.clock_mhz = _value(device / "gt_cur_freq_mhz")
         if gpu.clock_mhz is None:
@@ -106,7 +113,7 @@ def _bytes(value: str) -> int | None:
     match = re.match(r"\s*(\d+)\s*(B|KiB|MiB|GiB)?", value, re.I)
     if not match:
         return None
-    factor = {"b": 1, "kib": 1024, "mib": 1024**2, "gib": 1024**3}
+    factor = {"b": 1, "kib": 1024, "mib": 1048576, "gib": 1073741824} # GiB = 1024**3, MiB = 1024**2, KiB = 1024, B = 1
     return int(match.group(1)) * factor.get((match.group(2) or "B").lower(), 1)
 
 
@@ -238,9 +245,10 @@ class LinuxCollector:
                     clamp(ns / (elapsed * 1_000_000_000) * 100) or 0
                 )
         for gpu in gpus:
-            if gpu.utilization is None and gpu.engines:
-                gpu.utilization = max(gpu.engines.values())
+
             if gpu.utilization is None:
+                if gpu.engines:
+                    gpu.utilization = max(gpu.engines.values())
                 gpu.notes.append(
                     "GPU load needs driver counters or accessible DRM fdinfo."
                 )

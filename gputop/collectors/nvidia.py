@@ -55,9 +55,10 @@ def collect() -> tuple[list[GPU], list[Process]]:
                 source="nvidia-smi",
                 utilization=clamp(number(util)),
                 memory_utilization=clamp(number(mem_util)),
-                memory_used=int(used_mb * 1024 * 1024) if used_mb is not None else None,
+                # 1048576 is 1024 * 1024, converting MB to bytes
+                memory_used=int(used_mb * 1048576) if used_mb is not None else None,
                 memory_total=(
-                    int(total_mb * 1024 * 1024) if total_mb is not None else None
+                    int(total_mb * 1048576) if total_mb is not None else None
                 ),
                 temperature=number(temp),
                 power_w=number(power),
@@ -92,7 +93,7 @@ def collect() -> tuple[list[GPU], list[Process]]:
                     row[2],
                     by_uuid[row[0]],
                     "compute",
-                    memory_used=int(used * 1024 * 1024) if used is not None else None,
+                    memory_used=int(used * 1048576) if used is not None else None,
                     source="nvidia-smi",
                 )
             )

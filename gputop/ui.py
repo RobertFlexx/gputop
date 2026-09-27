@@ -11,7 +11,7 @@ from gputop.collectors.common import clamp, size
 from gputop.collectors.manager import Collector
 from gputop.model import GPU, Process, Snapshot
 
-SPEEDS = (0.1, 0.25, 0.5, 1.0, 1.5, 2.0, 5.0, 10.0, 30.0, 60.0)
+POLLING_SPEEDS = (0.1, 0.25, 0.5, 1.0, 1.5, 2.0, 5.0, 10.0, 30.0, 60.0)
 
 
 class Sampler:
@@ -585,17 +585,17 @@ class App:
             self.sampler.refresh()
         elif key in (ord("+"), ord("=")):
             self.sampler.interval = max(
-                (speed for speed in SPEEDS if speed < self.sampler.interval),
-                default=SPEEDS[0],
+                (speed for speed in POLLING_SPEEDS if speed < self.sampler.interval),
+                default=POLLING_SPEEDS[0],
             )
             self.sampler.refresh()
         elif key == ord("-"):
             self.sampler.interval = next(
-                (speed for speed in SPEEDS if speed > self.sampler.interval), SPEEDS[-1]
+                (speed for speed in POLLING_SPEEDS if speed > self.sampler.interval), POLLING_SPEEDS[-1]
             )
             self.sampler.refresh()
         elif ord("1") <= key <= ord("6"):
-            self.sampler.interval = SPEEDS[key - ord("1")]
+            self.sampler.interval = POLLING_SPEEDS[key - ord("1")]
             self.sampler.refresh()
         self.row = max(0, self.row)
         return True

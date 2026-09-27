@@ -48,19 +48,26 @@ def _core_stats(text: str) -> dict[str, float]:
     channel names alone are not readings and have no numeric assignment.
     """
     result: dict[str, float] = {}
-    pattern = r'"((?:GPU|Shader) Core \d+ Utilization %)"\s*=\s*"?([\d]+(?:\.[\d]+)?)"?'
-    for name, value in re.findall(pattern, text):
+    for name, value in re.findall(
+        r'"((?:GPU|Shader) Core \d+ Utilization %)"\s*=\s*"?([\d]+(?:\.[\d]+)?)"?', text
+    ):
         result[name] = clamp(float(value)) or 0.0
     return result
 
 
 def _accelerators(text: str) -> list[tuple[str, str]]:
     starts = list(re.finditer(r"(?m)^\+-o\s+(\S+)\s+<class ", text))
-    result = []
-    for index, match in enumerate(starts):
-        end = starts[index + 1].start() if index + 1 < len(starts) else len(text)
-        result.append((match.group(1), text[match.start() : end]))
-    return result
+    return [
+        (
+            match.group(1),
+            text[
+                match.start() : (
+                    starts[index + 1].start() if index + 1 < len(starts) else len(text)
+                )
+            ],
+        )
+        for index, match in enumerate(starts)
+    ]
 
 
 def _agx_clients(text: str) -> list[AGXClient]:
@@ -265,11 +272,7 @@ class MacCollector:
                 if elapsed_ns and elapsed_ns > 0
                 else None
             )
-            percent = (
-                clamp(row.delta_ns / elapsed_ns * 100)
-                if elapsed_ns and elapsed_ns > 0
-                else None
-            )
+            percent = clamp(gpu_ms / 10) if gpu_ms is not None else None
             result.append(
                 Process(
                     pid,

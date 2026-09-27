@@ -5,6 +5,8 @@ import platform
 import time
 
 from gputop.collectors import nvidia
+from gputop.collectors.linux import LinuxCollector
+from gputop.collectors.macos import MacCollector
 from gputop.model import GPU, Process, Snapshot
 
 
@@ -20,11 +22,9 @@ class Collector:
         self.demo = demo
         self.platform = platform.system()
         if self.platform == "Linux":
-            from gputop.collectors.linux import LinuxCollector
 
             self.native = LinuxCollector()
         elif self.platform == "Darwin":
-            from gputop.collectors.macos import MacCollector
 
             self.native = MacCollector()
         else:
