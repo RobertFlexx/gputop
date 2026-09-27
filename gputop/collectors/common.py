@@ -9,7 +9,9 @@ from pathlib import Path
 
 def command(args: list[str], timeout: float = 2.5) -> str | None:
     try:
-        result = subprocess.run(args, capture_output=True, text=True, timeout=timeout, check=False)
+        result = subprocess.run(
+            args, capture_output=True, text=True, timeout=timeout, check=False
+        )
     except (OSError, subprocess.TimeoutExpired):
         return None
     return result.stdout if result.returncode == 0 else None
@@ -26,7 +28,13 @@ def number(value: object) -> float | None:
     if value is None:
         return None
     text = str(value).strip().replace(",", "")
-    if not text or text.lower() in {"n/a", "[not supported]", "not supported", "-", "none"}:
+    if not text or text.lower() in {
+        "n/a",
+        "[not supported]",
+        "not supported",
+        "-",
+        "none",
+    }:
         return None
     match = re.search(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)", text)
     if not match:
@@ -43,7 +51,9 @@ def integer(value: object) -> int | None:
 
 
 def csv_rows(text: str) -> list[list[str]]:
-    return [[field.strip() for field in row] for row in csv.reader(io.StringIO(text)) if row]
+    return [
+        [field.strip() for field in row] for row in csv.reader(io.StringIO(text)) if row
+    ]
 
 
 def clamp(value: float | None, low: float = 0.0, high: float = 100.0) -> float | None:

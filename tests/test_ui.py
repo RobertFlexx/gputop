@@ -45,17 +45,32 @@ class Screen:
 class CoreViewTests(unittest.TestCase):
     def make_app(self, gpu: GPU) -> tuple[App, Screen]:
         screen = Screen()
-        sampler = SimpleNamespace(snapshot=Snapshot(gpus=[gpu]), revision=1, interval=1.5,
-                                  paused=False, refresh=lambda: None)
-        with patch.object(curses, "start_color"), patch.object(curses, "use_default_colors"), \
-             patch.object(curses, "init_pair"), patch.object(curses, "curs_set"):
+        sampler = SimpleNamespace(
+            snapshot=Snapshot(gpus=[gpu]),
+            revision=1,
+            interval=1.5,
+            paused=False,
+            refresh=lambda: None,
+        )
+        with (
+            patch.object(curses, "start_color"),
+            patch.object(curses, "use_default_colors"),
+            patch.object(curses, "init_pair"),
+            patch.object(curses, "curs_set"),
+        ):
             app = App(screen, sampler)
         app.colors = False
         return app, screen
 
     def test_core_toggle_shows_missing_readings_without_inventing_load(self) -> None:
-        gpu = GPU("mac:0", "Apple M5", "Apple", core_count=8,
-                  utilization=32, core_equivalent_load=2.56)
+        gpu = GPU(
+            "mac:0",
+            "Apple M5",
+            "Apple",
+            core_count=8,
+            utilization=32,
+            core_equivalent_load=2.56,
+        )
         app, screen = self.make_app(gpu)
         self.assertTrue(app.key(ord("c")))
         app.draw()
@@ -71,9 +86,16 @@ class CoreViewTests(unittest.TestCase):
         self.assertIn("Processes (0)", screen.text())
 
     def test_measured_zero_and_partial_readings(self) -> None:
-        gpu = GPU("mac:0", "Apple test", "Apple", core_count=4,
-                  core_utilization={"GPU Core 0 Utilization %": 0.0,
-                                    "Shader Core 2 Utilization %": 75.0})
+        gpu = GPU(
+            "mac:0",
+            "Apple test",
+            "Apple",
+            core_count=4,
+            core_utilization={
+                "GPU Core 0 Utilization %": 0.0,
+                "Shader Core 2 Utilization %": 75.0,
+            },
+        )
         app, screen = self.make_app(gpu)
         app.key(ord("c"))
         app.draw()

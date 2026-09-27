@@ -34,8 +34,10 @@ def _stats(text: str) -> dict[str, int]:
     match = re.search(r'"PerformanceStatistics"\s*=\s*\{([^}]+)\}', text)
     if not match:
         return {}
-    return {key: int(value) for key, value in
-            re.findall(r'"([^"]+)"\s*=\s*(\d+)', match.group(1))}
+    return {
+        key: int(value)
+        for key, value in re.findall(r'"([^"]+)"\s*=\s*(\d+)', match.group(1))
+    }
 
 
 def _core_stats(text: str) -> dict[str, float]:
@@ -57,7 +59,7 @@ def _accelerators(text: str) -> list[tuple[str, str]]:
     result = []
     for index, match in enumerate(starts):
         end = starts[index + 1].start() if index + 1 < len(starts) else len(text)
-        result.append((match.group(1), text[match.start():end]))
+        result.append((match.group(1), text[match.start() : end]))
     return result
 
 
@@ -70,14 +72,21 @@ def _agx_clients(text: str) -> list[AGXClient]:
             return
         if int(current.get("gpu_time_ns", 0)) <= 0:
             return
-        result.append(AGXClient(str(current["registry_id"]), int(current["pid"]),
-                                str(current.get("name", f"pid {current['pid']}")),
-                                int(current.get("gpu_time_ns", 0)),
-                                int(current.get("last_submitted_ns", 0)),
-                                int(current.get("queues", 0))))
+        result.append(
+            AGXClient(
+                str(current["registry_id"]),
+                int(current["pid"]),
+                str(current.get("name", f"pid {current['pid']}")),
+                int(current.get("gpu_time_ns", 0)),
+                int(current.get("last_submitted_ns", 0)),
+                int(current.get("queues", 0)),
+            )
+        )
 
     for line in text.splitlines():
-        start = re.search(r"\+-o\s+AGXDeviceUserClient\s+<class .*?\bid (0x[0-9a-fA-F]+)", line)
+        start = re.search(
+            r"\+-o\s+AGXDeviceUserClient\s+<class .*?\bid (0x[0-9a-fA-F]+)", line
+        )
         if start:
             finish()
             current = {"registry_id": start.group(1)}
@@ -93,8 +102,13 @@ def _agx_clients(text: str) -> list[AGXClient]:
             current["pid"] = int(creator.group(1))
             current["name"] = creator.group(2)
         if '"AppUsage"' in line:
-            current["gpu_time_ns"] = sum(map(int, re.findall(r'"accumulatedGPUTime"\s*=\s*(\d+)', line)))
-            submitted = [int(value) for value in re.findall(r'"lastSubmittedTime"\s*=\s*(\d+)', line)]
+            current["gpu_time_ns"] = sum(
+                map(int, re.findall(r'"accumulatedGPUTime"\s*=\s*(\d+)', line))
+            )
+            submitted = [
+                int(value)
+                for value in re.findall(r'"lastSubmittedTime"\s*=\s*(\d+)', line)
+            ]
             current["last_submitted_ns"] = max(submitted, default=0)
         queues = re.search(r'"CommandQueueCount"\s*=\s*(\d+)', line)
         if queues:
@@ -121,8 +135,16 @@ def _processes(text: str, gpu_id: str) -> list[Process]:
         name, pid, gpu_ms = match.groups()
         value = float(gpu_ms)
         if name and value > 0:
-            result.append(Process(int(pid), name.strip(), gpu_id, "GPU time", source="powermetrics",
-                                  gpu_time_ms_s=value))
+            result.append(
+                Process(
+                    int(pid),
+                    name.strip(),
+                    gpu_id,
+                    "GPU time",
+                    source="powermetrics",
+                    gpu_time_ms_s=value,
+                )
+            )
     return result
 
 
@@ -184,8 +206,19 @@ class MacCollector:
     def _refresh_powermetrics(self) -> None:
         if os.geteuid() != 0 or time.monotonic() - self.last_power < 5:
             return
-        output = command(["powermetrics", "--samplers", "tasks,gpu_power", "--show-process-gpu",
-                          "-n", "1", "-i", "1000"], 3)
+        output = command(
+            [
+                "powermetrics",
+                "--samplers",
+                "tasks,gpu_power",
+                "--show-process-gpu",
+                "-n",
+                "1",
+                "-i",
+                "1000",
+            ],
+            3,
+        )
         self.last_power = time.monotonic()
         self.power_text = output or ""
         patterns = {
@@ -199,8 +232,12 @@ class MacCollector:
             if match:
                 self.power[key] = float(match.group(1))
 
-    def _process_samples(self, clients: list[AGXClient], gpu_id: str, now_ns: int) -> list[Process]:
-        elapsed_ns = now_ns - self.last_sample_ns if self.last_sample_ns is not None else None
+    def _process_samples(
+        self, clients: list[AGXClient], gpu_id: str, now_ns: int
+    ) -> list[Process]:
+        elapsed_ns = (
+            now_ns - self.last_sample_ns if self.last_sample_ns is not None else None
+        )
         current: dict[str, tuple[int, int]] = {}
         by_pid: dict[int, ProcessTotals] = {}
         for client in clients:
@@ -216,18 +253,38 @@ class MacCollector:
         self.last_sample_ns = now_ns
         result: list[Process] = []
         for pid, row in by_pid.items():
-            last_active = (max(0.0, (now_ns - row.last_submitted_ns) / 1e9)
-                           if row.last_submitted_ns else None)
+            last_active = (
+                max(0.0, (now_ns - row.last_submitted_ns) / 1e9)
+                if row.last_submitted_ns
+                else None
+            )
             if last_active is not None and last_active > 60 and row.delta_ns == 0:
                 continue
-            gpu_ms = row.delta_ns / elapsed_ns * 1000 if elapsed_ns and elapsed_ns > 0 else None
-            percent = clamp(row.delta_ns / elapsed_ns * 100) if elapsed_ns and elapsed_ns > 0 else None
-            result.append(Process(pid, self.names.get(pid, row.name), gpu_id, "Metal",
-                                  percent, source="AGX AppUsage", gpu_time_ms_s=gpu_ms,
-                                  gpu_time_total_ns=row.gpu_time_ns,
-                                  queue_count=row.queues,
-                                  last_active_seconds=last_active,
-                                  system_memory_used=self.rss.get(pid)))
+            gpu_ms = (
+                row.delta_ns / elapsed_ns * 1000
+                if elapsed_ns and elapsed_ns > 0
+                else None
+            )
+            percent = (
+                clamp(row.delta_ns / elapsed_ns * 100)
+                if elapsed_ns and elapsed_ns > 0
+                else None
+            )
+            result.append(
+                Process(
+                    pid,
+                    self.names.get(pid, row.name),
+                    gpu_id,
+                    "Metal",
+                    percent,
+                    source="AGX AppUsage",
+                    gpu_time_ms_s=gpu_ms,
+                    gpu_time_total_ns=row.gpu_time_ns,
+                    queue_count=row.queues,
+                    last_active_seconds=last_active,
+                    system_memory_used=self.rss.get(pid),
+                )
+            )
         return result
 
     def collect(self) -> tuple[list[GPU], list[Process]]:
@@ -235,23 +292,57 @@ class MacCollector:
         output = command(["ioreg", "-r", "-l", "-w0", "-c", "IOAccelerator"], 2) or ""
         segments = _accelerators(output)
         if not segments:
-            output = command(["ioreg", "-r", "-l", "-w0", "-c", "AGXFamilyAccelerator"], 2) or ""
+            output = (
+                command(["ioreg", "-r", "-l", "-w0", "-c", "AGXFamilyAccelerator"], 2)
+                or ""
+            )
             segments = _accelerators(output)
         gpus: list[GPU] = []
         for index, info in enumerate(self.devices):
             name = info.get("spdisplays_model") or info.get("_name") or f"GPU {index}"
             apple = "Apple" in name or "Apple" in info.get("spdisplays_vendor", "")
-            vendor = "Apple" if apple else "AMD" if "AMD" in name or "Radeon" in name else "Intel" if "Intel" in name else "Unknown"
-            kind = "integrated" if apple or vendor == "Intel" else "dedicated" if vendor == "AMD" else "unknown"
-            gpus.append(GPU(id=f"mac:{index}", name=name, vendor=vendor, kind=kind,
-                            driver="Metal/IOKit", source="system_profiler + IOKit",
-                            core_count=integer(info.get("sppci_cores") or info.get("spdisplays_cores"))))
+            vendor = (
+                "Apple"
+                if apple
+                else (
+                    "AMD"
+                    if "AMD" in name or "Radeon" in name
+                    else "Intel" if "Intel" in name else "Unknown"
+                )
+            )
+            kind = (
+                "integrated"
+                if apple or vendor == "Intel"
+                else "dedicated" if vendor == "AMD" else "unknown"
+            )
+            gpus.append(
+                GPU(
+                    id=f"mac:{index}",
+                    name=name,
+                    vendor=vendor,
+                    kind=kind,
+                    driver="Metal/IOKit",
+                    source="system_profiler + IOKit",
+                    core_count=integer(
+                        info.get("sppci_cores") or info.get("spdisplays_cores")
+                    ),
+                )
+            )
         if not gpus:
             for index, (class_name, _) in enumerate(segments):
                 vendor = _vendor(class_name)
-                gpus.append(GPU(id=f"mac:{index}", name=class_name, vendor=vendor,
-                                kind="integrated" if vendor in {"Apple", "Intel"} else "unknown",
-                                driver="IOKit", source="IOKit"))
+                gpus.append(
+                    GPU(
+                        id=f"mac:{index}",
+                        name=class_name,
+                        vendor=vendor,
+                        kind=(
+                            "integrated" if vendor in {"Apple", "Intel"} else "unknown"
+                        ),
+                        driver="IOKit",
+                        source="IOKit",
+                    )
+                )
         if not gpus:
             return [], []
         clients: list[AGXClient] = []
@@ -266,28 +357,48 @@ class MacCollector:
             stats = _stats(segment)
             gpu.utilization = clamp(number(stats.get("Device Utilization %")))
             if gpu.vendor == "Apple":
-                gpu.engines = {name: float(stats[key]) for name, key in
-                               (("renderer", "Renderer Utilization %"), ("tiler", "Tiler Utilization %"))
-                               if key in stats}
+                gpu.engines = {
+                    name: float(stats[key])
+                    for name, key in (
+                        ("renderer", "Renderer Utilization %"),
+                        ("tiler", "Tiler Utilization %"),
+                    )
+                    if key in stats
+                }
                 gpu.memory_used = stats.get("In use system memory")
                 count = re.search(r'"gpu-core-count"\s*=\s*(\d+)', segment)
-                gpu.core_count = gpu.core_count or integer(count.group(1) if count else None)
+                gpu.core_count = gpu.core_count or integer(
+                    count.group(1) if count else None
+                )
                 gpu.core_utilization = _core_stats(segment)
                 gpu.notes.append("Unified memory is shared with the CPU.")
                 if gpu.core_count and not gpu.core_utilization:
-                    gpu.notes.append("IOKit exposes GPU core count, but no physical per-core utilization counters.")
+                    gpu.notes.append(
+                        "IOKit exposes GPU core count, but no physical per-core utilization counters."
+                    )
                 clients.extend(_agx_clients(segment))
             else:
-                gpu.memory_used = stats.get("inUseVidMemoryBytes") or stats.get("inUseSysMemoryBytes")
-                gpu.engines = {name: float(value) for name, value in stats.items()
-                               if re.fullmatch(r"Device Unit \d+ Utilization %", name)}
+                gpu.memory_used = stats.get("inUseVidMemoryBytes") or stats.get(
+                    "inUseSysMemoryBytes"
+                )
+                gpu.engines = {
+                    name: float(value)
+                    for name, value in stats.items()
+                    if re.fullmatch(r"Device Unit \d+ Utilization %", name)
+                }
                 gpu.core_utilization = _core_stats(segment)
                 gpu_index = int(gpu.id.split(":")[-1])
-                vram = str(self.devices[gpu_index].get("spdisplays_vram") or "") if gpu_index < len(self.devices) else ""
+                vram = (
+                    str(self.devices[gpu_index].get("spdisplays_vram") or "")
+                    if gpu_index < len(self.devices)
+                    else ""
+                )
                 capacity = re.search(r"([\d.]+)\s*(GB|MB)", vram, re.I)
                 if capacity:
-                    gpu.memory_total = int(float(capacity.group(1)) *
-                                           (1024**3 if capacity.group(2).lower() == "gb" else 1024**2))
+                    gpu.memory_total = int(
+                        float(capacity.group(1))
+                        * (1024**3 if capacity.group(2).lower() == "gb" else 1024**2)
+                    )
             if gpu.core_count and gpu.utilization is not None:
                 gpu.core_equivalent_load = gpu.core_count * gpu.utilization / 100
             if "recoveryCount" in stats:
@@ -298,12 +409,20 @@ class MacCollector:
                 gpu.extras["tiled_scene_bytes"] = stats["TiledSceneBytes"]
         self._refresh_process_info()
         now_ns = time.monotonic_ns()
-        processes = self._process_samples(clients, next((gpu.id for gpu in gpus if gpu.vendor == "Apple"), gpus[0].id), now_ns)
+        processes = self._process_samples(
+            clients,
+            next((gpu.id for gpu in gpus if gpu.vendor == "Apple"), gpus[0].id),
+            now_ns,
+        )
         self._refresh_powermetrics()
         if self.power:
             for gpu in gpus:
                 if gpu.vendor == "Apple":
-                    gpu.power_w = self.power.get("power_mw", 0) / 1000 if "power_mw" in self.power else None
+                    gpu.power_w = (
+                        self.power.get("power_mw", 0) / 1000
+                        if "power_mw" in self.power
+                        else None
+                    )
                     gpu.clock_mhz = self.power.get("clock_mhz")
                     gpu.temperature = self.power.get("temperature")
         if not processes and self.power_text:
@@ -311,5 +430,7 @@ class MacCollector:
         if not clients and any(gpu.vendor == "Apple" for gpu in gpus):
             for gpu in gpus:
                 if gpu.vendor == "Apple":
-                    gpu.notes.append("This macOS driver did not expose AGX process counters.")
+                    gpu.notes.append(
+                        "This macOS driver did not expose AGX process counters."
+                    )
         return gpus, processes

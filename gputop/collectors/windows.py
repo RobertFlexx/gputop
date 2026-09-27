@@ -32,40 +32,74 @@ def parse(payload: dict) -> tuple[list[GPU], list[Process]]:
     gpus: list[GPU] = []
     for index, entry in enumerate(adapters):
         name = str(entry.get("Name") or f"GPU {index}")
-        vendor = "NVIDIA" if "NVIDIA" in name.upper() else "AMD" if any(x in name.upper() for x in ("AMD", "RADEON")) else "Intel" if "INTEL" in name.upper() else "Unknown"
+        vendor = (
+            "NVIDIA"
+            if "NVIDIA" in name.upper()
+            else (
+                "AMD"
+                if any(x in name.upper() for x in ("AMD", "RADEON"))
+                else "Intel" if "INTEL" in name.upper() else "Unknown"
+            )
+        )
         if vendor == "Intel":
-            kind = "dedicated" if re.search(r"\bArc [AB]\d|Iris Xe MAX", name, re.I) else "integrated"
+            kind = (
+                "dedicated"
+                if re.search(r"\bArc [AB]\d|Iris Xe MAX", name, re.I)
+                else "integrated"
+            )
         else:
             kind = "unknown"
-        gpus.append(GPU(id=f"win:{index}", name=name, vendor=vendor, kind=kind,
-                        driver=str(entry.get("DriverVersion") or ""), source="WDDM counters",
-                        notes=["Temperature and power need a vendor utility."]))
+        gpus.append(
+            GPU(
+                id=f"win:{index}",
+                name=name,
+                vendor=vendor,
+                kind=kind,
+                driver=str(entry.get("DriverVersion") or ""),
+                source="WDDM counters",
+                notes=["Temperature and power need a vendor utility."],
+            )
+        )
     groups: dict[str, dict[str, float]] = {}
     proc_load: dict[tuple[str, int], float] = {}
     for entry in payload.get("engine") or []:
         path = str(entry.get("Path") or "").lower()
-        match = re.search(r"pid_(\d+)_luid_([^_]+_[^_]+)_phys_\d+_eng_\d+_engtype_([^\\)]+)", path)
+        match = re.search(
+            r"pid_(\d+)_luid_([^_]+_[^_]+)_phys_\d+_eng_\d+_engtype_([^\\)]+)", path
+        )
         value = number(entry.get("Value"))
         if not match or value is None:
             continue
         pid, luid, engine = int(match.group(1)), match.group(2), match.group(3)
-        groups.setdefault(luid, {})[engine] = groups.setdefault(luid, {}).get(engine, 0) + value
+        groups.setdefault(luid, {})[engine] = (
+            groups.setdefault(luid, {}).get(engine, 0) + value
+        )
         key = (luid, pid)
         proc_load[key] = max(proc_load.get(key, 0), value)
     luid_map: dict[str, str] = {}
     if len(gpus) == 1 and len(groups) == 1:
         luid = next(iter(groups))
         luid_map[luid] = gpus[0].id
-        gpus[0].engines = {name: clamp(load) or 0 for name, load in groups[luid].items()}
+        gpus[0].engines = {
+            name: clamp(load) or 0 for name, load in groups[luid].items()
+        }
         gpus[0].utilization = max(gpus[0].engines.values(), default=None)
     else:
         for luid, engines in groups.items():
             gpu_id = f"luid:{luid}"
             luid_map[luid] = gpu_id
             mapped = {name: clamp(load) or 0 for name, load in engines.items()}
-            gpus.append(GPU(id=gpu_id, name=f"WDDM adapter {luid}", vendor="Unknown", source="WDDM counters",
-                            utilization=max(mapped.values(), default=None), engines=mapped,
-                            notes=["Adapter LUID could not be matched to a device name."]))
+            gpus.append(
+                GPU(
+                    id=gpu_id,
+                    name=f"WDDM adapter {luid}",
+                    vendor="Unknown",
+                    source="WDDM counters",
+                    utilization=max(mapped.values(), default=None),
+                    engines=mapped,
+                    notes=["Adapter LUID could not be matched to a device name."],
+                )
+            )
     mem_usage: dict[tuple[str, int], int] = {}
     pid_mem_usage: dict[int, int] = {}
     for entry in payload.get("memory") or []:
@@ -80,19 +114,39 @@ def parse(payload: dict) -> tuple[list[GPU], list[Process]]:
                 mem_usage[key] = max(mem_usage.get(key, 0), int(value))
             else:
                 pid_mem_usage[pid] = max(pid_mem_usage.get(pid, 0), int(value))
-    names = {int(item["Id"]): str(item["Name"]) for item in payload.get("names") or []
-             if isinstance(item, dict) and item.get("Id") is not None}
-    ram = {int(item["Id"]): int(item["WorkingSet"]) for item in payload.get("names") or []
-           if isinstance(item, dict) and item.get("Id") is not None and item.get("WorkingSet") is not None}
-    processes = [Process(pid, names.get(pid, f"pid {pid}"), luid_map[luid], "WDDM",
-                         clamp(load), mem_usage.get((luid, pid), pid_mem_usage.get(pid)), "WDDM counters",
-                         system_memory_used=ram.get(pid))
-                 for (luid, pid), load in proc_load.items() if luid in luid_map]
+    names = {
+        int(item["Id"]): str(item["Name"])
+        for item in payload.get("names") or []
+        if isinstance(item, dict) and item.get("Id") is not None
+    }
+    ram = {
+        int(item["Id"]): int(item["WorkingSet"])
+        for item in payload.get("names") or []
+        if isinstance(item, dict)
+        and item.get("Id") is not None
+        and item.get("WorkingSet") is not None
+    }
+    processes = [
+        Process(
+            pid,
+            names.get(pid, f"pid {pid}"),
+            luid_map[luid],
+            "WDDM",
+            clamp(load),
+            mem_usage.get((luid, pid), pid_mem_usage.get(pid)),
+            "WDDM counters",
+            system_memory_used=ram.get(pid),
+        )
+        for (luid, pid), load in proc_load.items()
+        if luid in luid_map
+    ]
     return gpus, processes
 
 
 def collect() -> tuple[list[GPU], list[Process]]:
-    output = command(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", SCRIPT], 6)
+    output = command(
+        ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", SCRIPT], 6
+    )
     if not output:
         return [], []
     try:

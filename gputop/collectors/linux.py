@@ -50,18 +50,32 @@ def _gpu_cards(root: Path) -> list[GPU]:
         except OSError:
             driver = ""
         gpu_id = _pci_id(device)
-        name = read(device / "product_name") or _pci_name(gpu_id) or read(device / "product_number")
+        name = (
+            read(device / "product_name")
+            or _pci_name(gpu_id)
+            or read(device / "product_number")
+        )
         if not name:
             name = f"{vendor} GPU {read(device / 'device') or card.name}"
         vram_total = _value(device / "mem_info_vram_total")
         vram_used = _value(device / "mem_info_vram_used")
-        kind = ("dedicated" if vram_total and vram_total > 1024**3 else
-                "integrated" if driver in {"i915", "xe"} else "unknown")
-        gpu = GPU(id=gpu_id, name=name, vendor=vendor, kind=kind, driver=driver,
-                  source="Linux DRM/sysfs", utilization=clamp(_value(device / "gpu_busy_percent")),
-                  memory_utilization=clamp(_value(device / "mem_busy_percent")),
-                  memory_used=int(vram_used) if vram_used is not None else None,
-                  memory_total=int(vram_total) if vram_total is not None else None)
+        kind = (
+            "dedicated"
+            if vram_total and vram_total > 1024**3
+            else "integrated" if driver in {"i915", "xe"} else "unknown"
+        )
+        gpu = GPU(
+            id=gpu_id,
+            name=name,
+            vendor=vendor,
+            kind=kind,
+            driver=driver,
+            source="Linux DRM/sysfs",
+            utilization=clamp(_value(device / "gpu_busy_percent")),
+            memory_utilization=clamp(_value(device / "mem_busy_percent")),
+            memory_used=int(vram_used) if vram_used is not None else None,
+            memory_total=int(vram_total) if vram_total is not None else None,
+        )
         gpu.clock_mhz = _value(device / "gt_cur_freq_mhz")
         if gpu.clock_mhz is None:
             clocks = read(device / "pp_dpm_sclk") or ""
@@ -75,7 +89,10 @@ def _gpu_cards(root: Path) -> list[GPU]:
             pwm = _value(hwmon / "pwm1")
             pwm_max = _value(hwmon / "pwm1_max") or 255
             gpu.fan_percent = clamp(pwm / pwm_max * 100) if pwm is not None else None
-            for channel, label in (("temp2_input", "hotspot_c"), ("temp3_input", "memory_c")):
+            for channel, label in (
+                ("temp2_input", "hotspot_c"),
+                ("temp3_input", "memory_c"),
+            ):
                 value = _value(hwmon / channel, 1000)
                 if value is not None:
                     gpu.extras[label] = value
@@ -94,8 +111,12 @@ def _bytes(value: str) -> int | None:
 
 
 def _fdinfo(text: str) -> dict[str, str]:
-    return dict((key.strip(), value.strip()) for key, value in
-                (line.split(":", 1) for line in text.splitlines() if ":" in line))
+    return dict(
+        (key.strip(), value.strip())
+        for key, value in (
+            line.split(":", 1) for line in text.splitlines() if ":" in line
+        )
+    )
 
 
 class LinuxCollector:
@@ -110,7 +131,10 @@ class LinuxCollector:
         by_id = {gpu.id: gpu for gpu in gpus}
         node_ids: dict[str, str] = {}
         for node in self.drm_root.glob("*"):
-            if re.fullmatch(r"(?:card|renderD)\d+", node.name) and (node / "device").exists():
+            if (
+                re.fullmatch(r"(?:card|renderD)\d+", node.name)
+                and (node / "device").exists()
+            ):
                 node_ids[node.name] = _pci_id(node / "device")
         now = time.monotonic()
         elapsed = now - self.last_time if self.last_time is not None else None
@@ -154,8 +178,9 @@ class LinuxCollector:
                 process_key = (pid, gpu_id)
                 process_engines.setdefault(process_key, set())
                 if memory_keys:
-                    process_memory[process_key] = process_memory.get(process_key, 0) + sum(
-                        _bytes(info[key]) or 0 for key in memory_keys)
+                    process_memory[process_key] = process_memory.get(
+                        process_key, 0
+                    ) + sum(_bytes(info[key]) or 0 for key in memory_keys)
                 for key, value in info.items():
                     if not key.startswith("drm-engine-"):
                         continue
@@ -170,8 +195,12 @@ class LinuxCollector:
                     if old is not None and elapsed and elapsed > 0 and counter >= old:
                         delta = counter - old
                         delta_key = (pid, gpu_id, engine)
-                        process_deltas[delta_key] = process_deltas.get(delta_key, 0) + delta
-                        engine_sums[(gpu_id, engine)] = engine_sums.get((gpu_id, engine), 0) + delta
+                        process_deltas[delta_key] = (
+                            process_deltas.get(delta_key, 0) + delta
+                        )
+                        engine_sums[(gpu_id, engine)] = (
+                            engine_sums.get((gpu_id, engine), 0) + delta
+                        )
                 if pid not in process_names:
                     process_names[pid] = read(proc / "comm") or f"pid {pid}"
                     status = read(proc / "status") or ""
@@ -182,17 +211,37 @@ class LinuxCollector:
         self.last_time = now
         processes: list[Process] = []
         for (pid, gpu_id), engines in process_engines.items():
-            rates = [clamp(process_deltas[(pid, gpu_id, engine)] / (elapsed * 1_000_000_000) * 100)
-                     for engine in engines if elapsed and elapsed > 0 and (pid, gpu_id, engine) in process_deltas]
-            processes.append(Process(pid, process_names[pid], gpu_id, ",".join(sorted(engines)) or "DRM",
-                                     max(rates) if rates else None, process_memory.get((pid, gpu_id)),
-                                     "DRM fdinfo", system_memory_used=process_rss.get(pid)))
+            rates = [
+                clamp(
+                    process_deltas[(pid, gpu_id, engine)]
+                    / (elapsed * 1_000_000_000)
+                    * 100
+                )
+                for engine in engines
+                if elapsed and elapsed > 0 and (pid, gpu_id, engine) in process_deltas
+            ]
+            processes.append(
+                Process(
+                    pid,
+                    process_names[pid],
+                    gpu_id,
+                    ",".join(sorted(engines)) or "DRM",
+                    max(rates) if rates else None,
+                    process_memory.get((pid, gpu_id)),
+                    "DRM fdinfo",
+                    system_memory_used=process_rss.get(pid),
+                )
+            )
         for (gpu_id, engine), ns in engine_sums.items():
             if elapsed and elapsed > 0:
-                by_id[gpu_id].engines[engine] = clamp(ns / (elapsed * 1_000_000_000) * 100) or 0
+                by_id[gpu_id].engines[engine] = (
+                    clamp(ns / (elapsed * 1_000_000_000) * 100) or 0
+                )
         for gpu in gpus:
             if gpu.utilization is None and gpu.engines:
                 gpu.utilization = max(gpu.engines.values())
             if gpu.utilization is None:
-                gpu.notes.append("GPU load needs driver counters or accessible DRM fdinfo.")
+                gpu.notes.append(
+                    "GPU load needs driver counters or accessible DRM fdinfo."
+                )
         return gpus, processes
