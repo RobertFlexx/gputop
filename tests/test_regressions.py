@@ -227,7 +227,9 @@ class MacRegressionTests(unittest.TestCase):
             [("AMD", "dedicated"), ("Intel", "integrated")],
         )
 
-    def test_builtin_apple_silicon_gpu_is_integrated_without_metal_inventory(self) -> None:
+    def test_builtin_apple_silicon_gpu_is_integrated_without_metal_inventory(
+        self,
+    ) -> None:
         self.collector.devices = [
             {
                 "_name": "Apple M5",
@@ -433,23 +435,34 @@ class MergeRegressionTests(unittest.TestCase):
             [
                 GPU("0000:01:00.0", "A", "NVIDIA"),
                 GPU(
-                    "0000:02:00.0", "B", "NVIDIA", kind="integrated",
+                    "0000:02:00.0",
+                    "B",
+                    "NVIDIA",
+                    kind="integrated",
                     extras={"kind_source": "DXCore.IsIntegrated"},
                 ),
             ]
         )
         incoming = [
             GPU(
-                "00000000:01:00.0", "A", "NVIDIA", kind="dedicated",
+                "00000000:01:00.0",
+                "A",
+                "NVIDIA",
+                kind="dedicated",
                 extras={"kind_source": "CUDA CU_DEVICE_ATTRIBUTE_INTEGRATED"},
             ),
             GPU(
-                "00000000:02:00.0", "B", "NVIDIA", kind="dedicated",
+                "00000000:02:00.0",
+                "B",
+                "NVIDIA",
+                kind="dedicated",
                 extras={"kind_source": "CUDA CU_DEVICE_ATTRIBUTE_INTEGRATED"},
             ),
         ]
         _merge_nvidia(snapshot, incoming, [], "Linux")
-        self.assertEqual([gpu.kind for gpu in snapshot.gpus], ["dedicated", "integrated"])
+        self.assertEqual(
+            [gpu.kind for gpu in snapshot.gpus], ["dedicated", "integrated"]
+        )
         self.assertIn("CUDA", snapshot.gpus[0].extras["kind_source"])
         self.assertEqual(snapshot.gpus[1].extras["kind_source"], "DXCore.IsIntegrated")
 

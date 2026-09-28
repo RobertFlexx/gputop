@@ -9,7 +9,6 @@ import time
 import unittest
 from pathlib import Path
 
-
 INSTALLER = Path(__file__).resolve().parents[1] / "install.sh"
 
 
@@ -30,8 +29,14 @@ class ShellInstallerTests(unittest.TestCase):
             PATH=f"{self.root / 'commands'}:{os.environ.get('PATH', '')}",
         )
         for key in (
-            "GPUTOP_DIR", "GPUTOP_BIN_DIR", "GPUTOP_METHOD", "GPUTOP_PYTHON",
-            "GPUTOP_REF", "GPUTOP_REPO", "GPUTOP_SOURCE", "GPUTOP_RC_FILE",
+            "GPUTOP_DIR",
+            "GPUTOP_BIN_DIR",
+            "GPUTOP_METHOD",
+            "GPUTOP_PYTHON",
+            "GPUTOP_REF",
+            "GPUTOP_REPO",
+            "GPUTOP_SOURCE",
+            "GPUTOP_RC_FILE",
         ):
             self.env.pop(key, None)
 
@@ -56,7 +61,7 @@ class ShellInstallerTests(unittest.TestCase):
         python.write_text('#!/bin/sh\nprintf "0.2.0\\n"\n')
         python.chmod(0o755)
         app = venv_bin / "gputop"
-        app.write_text('#!/bin/sh\nexit 0\n')
+        app.write_text("#!/bin/sh\nexit 0\n")
         app.chmod(0o755)
         (commands / "gputop").symlink_to(app)
         (data / "install.state").write_text(
@@ -84,7 +89,9 @@ class ShellInstallerTests(unittest.TestCase):
         data, _ = self.managed_layout()
         source = self.root / "old-source"
         source.mkdir()
-        (source / "pyproject.toml").write_text("[project]\nname='gputop'\nversion='0.2.0'\n")
+        (source / "pyproject.toml").write_text(
+            "[project]\nname='gputop'\nversion='0.2.0'\n"
+        )
         state = data / "install.state"
         state.write_text(state.read_text().replace("source=\n", f"source={source}\n"))
         result = self.run_installer("--update", "--dry-run", "--ref", "new-release")
@@ -96,9 +103,7 @@ class ShellInstallerTests(unittest.TestCase):
         data, commands = self.managed_layout()
         launcher = commands / "gputop"
         launcher.unlink()
-        launcher.write_text(
-            f'#!/bin/sh\nexec "{data}/venv/bin/gputop" "$@"\n'
-        )
+        launcher.write_text(f'#!/bin/sh\nexec "{data}/venv/bin/gputop" "$@"\n')
         launcher.chmod(0o755)
         result = self.run_installer("--update", "--dry-run")
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -130,7 +135,7 @@ class ShellInstallerTests(unittest.TestCase):
         python = commands / "fakepython"
         python.write_text(
             "#!/bin/sh\n"
-            "case \"$2\" in\n"
+            'case "$2" in\n'
             f"  *locate_file*) printf '%s\\n' '{self.home}/.local/lib/site-packages' ;;\n"
             "  *) printf '0.2.0\\n' ;;\n"
             "esac\n"
@@ -174,7 +179,9 @@ class ShellInstallerTests(unittest.TestCase):
         self.env["NO_COLOR"] = "1"
         source = self.root / "source"
         source.mkdir()
-        (source / "pyproject.toml").write_text("[project]\nname='gputop'\nversion='0.2.0'\n")
+        (source / "pyproject.toml").write_text(
+            "[project]\nname='gputop'\nversion='0.2.0'\n"
+        )
         state = data / "install.state"
         state.write_text(state.read_text().replace("source=\n", f"source={source}\n"))
 

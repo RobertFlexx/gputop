@@ -29,7 +29,9 @@ def _query() -> dict[str, str]:
         library.cuDeviceGet.argtypes = [ct.POINTER(ct.c_int), ct.c_int]
         library.cuDeviceGet.restype = ct.c_int
         library.cuDeviceGetAttribute.argtypes = [
-            ct.POINTER(ct.c_int), ct.c_int, ct.c_int
+            ct.POINTER(ct.c_int),
+            ct.c_int,
+            ct.c_int,
         ]
         library.cuDeviceGetAttribute.restype = ct.c_int
         library.cuDeviceGetPCIBusId.argtypes = [ct.c_void_p, ct.c_int, ct.c_int]
@@ -48,7 +50,8 @@ def _query() -> dict[str, str]:
                 library.cuDeviceGet(ct.byref(device), index) != 0
                 or library.cuDeviceGetAttribute(
                     ct.byref(integrated), CU_DEVICE_ATTRIBUTE_INTEGRATED, device.value
-                ) != 0
+                )
+                != 0
                 or library.cuDeviceGetPCIBusId(bus_id, len(bus_id), device.value) != 0
             ):
                 continue

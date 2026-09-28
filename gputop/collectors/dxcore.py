@@ -115,7 +115,9 @@ def _read_adapter(adapter) -> HardwareAdapter | None:
         else None
     )
     identity = f"0x{luid.high:08x}_0x{luid.low:08x}"
-    return HardwareAdapter(identity, name or f"GPU {identity}", kind, vendor_id, kind_source)
+    return HardwareAdapter(
+        identity, name or f"GPU {identity}", kind, vendor_id, kind_source
+    )
 
 
 def adapters() -> list[HardwareAdapter]:

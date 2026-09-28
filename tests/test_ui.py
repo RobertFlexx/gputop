@@ -207,11 +207,14 @@ class CoreViewTests(unittest.TestCase):
         app.draw()
         self.assertIn("  1  python-workload", screen.text())
 
-    def test_process_signal_requires_confirmation_and_targets_selected_pid(self) -> None:
+    def test_process_signal_requires_confirmation_and_targets_selected_pid(
+        self,
+    ) -> None:
         gpu = GPU("gpu:1", "Test", "AMD")
         app, screen = self.make_app(gpu)
         app.sampler.snapshot.processes = [
-            Process(21001, "first", gpu.id), Process(21002, "second", gpu.id)
+            Process(21001, "first", gpu.id),
+            Process(21002, "second", gpu.id),
         ]
         app.draw()
         app.row = 1
@@ -220,7 +223,9 @@ class CoreViewTests(unittest.TestCase):
             app.key(ord("x"))
             kill.assert_not_called()
             app.draw()
-            self.assertIn("y confirm / other cancel: terminate PID 21002", screen.text())
+            self.assertIn(
+                "y confirm / other cancel: terminate PID 21002", screen.text()
+            )
             app.key(ord("n"))
             kill.assert_not_called()
             app.key(curses.KEY_F9)

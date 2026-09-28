@@ -237,7 +237,9 @@ class App:
             p.pid == pid and p.name == name and p.gpu_id == gpu_id
             for p in snapshot.processes
         ):
-            self.status = f"PID {pid} is no longer in the GPU process list; signal cancelled."
+            self.status = (
+                f"PID {pid} is no longer in the GPU process list; signal cancelled."
+            )
             return
         try:
             os.kill(pid, sig)
@@ -550,9 +552,7 @@ class App:
                 else "      --"
             )
             device = (
-                f" {gpu_numbers.get(process.gpu_id, '?'):>3}"
-                if self.all_gpus
-                else ""
+                f" {gpu_numbers.get(process.gpu_id, '?'):>3}" if self.all_gpus else ""
             )
             if compact:
                 label = (
@@ -696,7 +696,11 @@ class App:
                 sig = FORCE_SIGNAL if force else signal.SIGTERM
                 action = "kill" if force else "terminate"
                 self.pending_kill = (
-                    process.pid, process.name, process.gpu_id, sig, action
+                    process.pid,
+                    process.name,
+                    process.gpu_id,
+                    sig,
+                    action,
                 )
                 self.status = ""
         elif key in (curses.KEY_DOWN, ord("j")):

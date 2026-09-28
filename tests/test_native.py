@@ -161,12 +161,17 @@ class DxcoreApiTests(unittest.TestCase):
             self.assertEqual(
                 info,
                 HardwareAdapter(
-                    "0x00000003_0x00000007", "Arbitrary AMD name", expected, 0x1002,
+                    "0x00000003_0x00000007",
+                    "Arbitrary AMD name",
+                    expected,
+                    0x1002,
                     "DXCore.IsIntegrated" if integrated is not None else "",
                 ),
             )
 
-    def test_dedicated_memory_fallback_when_integrated_flag_is_unavailable(self) -> None:
+    def test_dedicated_memory_fallback_when_integrated_flag_is_unavailable(
+        self,
+    ) -> None:
         def prop(adapter, key, value):
             if key == dxcore.Property.IS_HARDWARE:
                 value.value = True
@@ -185,7 +190,6 @@ class DxcoreApiTests(unittest.TestCase):
             info = dxcore._read_adapter(ct.c_void_p(1))
         self.assertEqual(info.kind, "dedicated")
         self.assertEqual(info.kind_source, "DXCore.DedicatedAdapterMemory")
-
 
     def test_enumeration_deduplicates_apis_and_releases_every_interface(self) -> None:
         released = []
