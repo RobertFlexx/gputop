@@ -20,11 +20,20 @@ BIN_DIR="${GPUTOP_BIN_DIR:-}"
 RC_FILE="${GPUTOP_RC_FILE:-}"
 ASSUME_YES="${GPUTOP_YES:-}"
 CLEAN_VENV="${GPUTOP_CLEAN_VENV:-}"
+DATA_DIR_EXPLICIT="${GPUTOP_DIR+x}"
+BIN_DIR_EXPLICIT="${GPUTOP_BIN_DIR+x}"
+METHOD_EXPLICIT="${GPUTOP_METHOD+x}"
+REF_EXPLICIT="${GPUTOP_REF+x}"
+REPO_EXPLICIT="${GPUTOP_REPO+x}"
+SOURCE_EXPLICIT="${GPUTOP_SOURCE+x}"
+RC_FILE_EXPLICIT="${GPUTOP_RC_FILE+x}"
 PYTHON_CANDIDATES=""
 PYTHON_SEEN=""
 FOREIGN_BIN=""
 FOREIGN_PYTHON=""
 FOREIGN_VERSION=""
+FOREIGN_LOCATION=""
+FOREIGN_SCOPE=""
 CURRENT_VERSION=""
 LAUNCHER_KIND="none"
 STATE_RC_FILE=""
@@ -152,7 +161,7 @@ confirm() {
   else
     _cf_hint="y/N"
   fi
-  if [ ! -t 0 ]; then
+  if ! is_tty; then
     if [ "$_cf_default" = "y" ]; then
       return 0
     fi
@@ -160,7 +169,7 @@ confirm() {
   fi
   while :; do
     printf '%s%s%s [%s] ' "$C_BOLD" "$_cf_prompt" "$C_RESET" "$_cf_hint" >&2
-    IFS= read -r _cf_answer || _cf_answer=""
+    IFS= read -r _cf_answer </dev/tty || return 1
     _cf_lower=$(printf '%s' "$_cf_answer" | tr '[:upper:]' '[:lower:]')
     case "$_cf_lower" in
       "")
@@ -190,7 +199,7 @@ ask() {
   else
     printf '%s%s%s: ' "$C_BOLD" "$_ak_prompt" "$C_RESET" >&2
   fi
-  IFS= read -r _ak_answer || _ak_answer=""
+  IFS= read -r _ak_answer </dev/tty || return 1
   if [ -z "$_ak_answer" ]; then
     printf '%s' "$_ak_default"
   else
@@ -200,14 +209,32 @@ ask() {
 
 ask_choice() {
   _ac_prompt=$1
-  shift
+  _ac_default=$2
+  shift 2
   _ac_index=1
   printf '%s%s%s\n' "$C_BOLD" "$_ac_prompt" "$C_RESET" >&2
   for _ac_option in "$@"; do
-    printf '   %s) %s\n' "$_ac_index" "$_ac_option" >&2
+    if [ "$_ac_index" = "$_ac_default" ]; then
+      printf '   %s) %s (default)\n' "$_ac_index" "$_ac_option" >&2
+    else
+      printf '   %s) %s\n' "$_ac_index" "$_ac_option" >&2
+    fi
     _ac_index=$((_ac_index + 1))
   done
-  ask "Choice" "1"
+  while :; do
+    _ac_answer=$(ask "Choice" "$_ac_default") || return 1
+    case "$_ac_answer" in
+      "" | *[!0-9]*) ;;
+      *)
+        if [ "$_ac_answer" -ge 1 ] 2>/dev/null &&
+          [ "$_ac_answer" -lt "$_ac_index" ] 2>/dev/null; then
+          printf '%s' "$_ac_answer"
+          return 0
+        fi
+        ;;
+    esac
+    printf 'Choose a number from 1 to %s.\n' "$((_ac_index - 1))" >&2
+  done
 }
 
 usage() {
@@ -270,11 +297,13 @@ parse_args() {
       -d | --dir)
         [ $# -ge 2 ] || die "--dir needs a value"
         DATA_DIR=$2
+        DATA_DIR_EXPLICIT=1
         shift
         ;;
       --bin-dir)
         [ $# -ge 2 ] || die "--bin-dir needs a value"
         BIN_DIR=$2
+        BIN_DIR_EXPLICIT=1
         shift
         ;;
       --python)
@@ -285,26 +314,31 @@ parse_args() {
       -m | --method)
         [ $# -ge 2 ] || die "--method needs a value"
         METHOD=$2
+        METHOD_EXPLICIT=1
         shift
         ;;
       --ref)
         [ $# -ge 2 ] || die "--ref needs a value"
         REF=$2
+        REF_EXPLICIT=1
         shift
         ;;
       --repo)
         [ $# -ge 2 ] || die "--repo needs a value"
         REPO=$2
+        REPO_EXPLICIT=1
         shift
         ;;
       --source)
         [ $# -ge 2 ] || die "--source needs a value"
         SOURCE=$2
+        SOURCE_EXPLICIT=1
         shift
         ;;
       --rc-file)
         [ $# -ge 2 ] || die "--rc-file needs a value"
         RC_FILE=$2
+        RC_FILE_EXPLICIT=1
         shift
         ;;
       --no-path)
@@ -342,11 +376,15 @@ apply_layout() {
     BIN_DIR="$HOME_DIR/.local/bin"
   fi
   case "$DATA_DIR" in
-    */) DATA_DIR=${DATA_DIR%/} ;;
+    /*) ;;
+    *) DATA_DIR="$(pwd -P)/$DATA_DIR" ;;
   esac
   case "$BIN_DIR" in
-    */) BIN_DIR=${BIN_DIR%/} ;;
+    /*) ;;
+    *) BIN_DIR="$(pwd -P)/$BIN_DIR" ;;
   esac
+  [ "$DATA_DIR" = "/" ] || DATA_DIR=${DATA_DIR%/}
+  [ "$BIN_DIR" = "/" ] || BIN_DIR=${BIN_DIR%/}
   VENV_DIR="$DATA_DIR/venv"
   SRC_DIR="$DATA_DIR/src"
   VENV_BIN="$VENV_DIR/bin"
@@ -360,6 +398,9 @@ detect_local_source() {
   if [ -n "$SOURCE" ]; then
     [ -f "$SOURCE/pyproject.toml" ] || die "no pyproject.toml in $SOURCE"
     SOURCE=$(cd "$SOURCE" && pwd -P)
+    return 0
+  fi
+  if [ -n "$REF_EXPLICIT" ] || [ -n "$REPO_EXPLICIT" ]; then
     return 0
   fi
   if [ -f "$0" ] && [ -d "$(dirname "$0")/${APP_NAME}" ]; then
@@ -480,7 +521,7 @@ resolve_method() {
   fi
   case "$METHOD" in
     pip) ;;
-    uv) ensure_uv ;;
+    uv) ;;
     *) die "unknown method: $METHOD (use pip or uv)" ;;
   esac
 }
@@ -500,19 +541,18 @@ resolve_python() {
     return 0
   fi
   if is_tty && confirm "No Python $MIN_PYTHON+ found here. Install one with uv?" y; then
-    ensure_uv
-    PYTHON=$(install_managed_python)
+    PYTHON="managed:$MANAGED_PYTHON"
     return 0
   fi
   if [ "$METHOD" = "uv" ]; then
-    PYTHON=$(install_managed_python)
+    PYTHON="managed:$MANAGED_PYTHON"
     return 0
   fi
   return 1
 }
 
 is_tty() {
-  [ -t 0 ]
+  ( : </dev/tty ) >/dev/null 2>&1
 }
 
 download() {
@@ -662,8 +702,8 @@ has_install() {
 }
 
 has_managed_install() {
-  has_install && return 0
-  [ -f "$STATE_FILE" ]
+  [ -f "$STATE_FILE" ] || return 1
+  [ "$(state_value version || printf '')" = "1" ]
 }
 
 path_entry() {
@@ -696,10 +736,77 @@ state_write() {
     printf 'method=%s\n' "$METHOD"
     printf 'ref=%s\n' "$REF"
     printf 'repo=%s\n' "$REPO"
+    printf 'source=%s\n' "$SOURCE"
     printf 'python=%s\n' "$PYTHON"
     printf 'installed_version=%s\n' "$(managed_version || printf 'unknown')"
   } >"$STATE_FILE.tmp"
   mv "$STATE_FILE.tmp" "$STATE_FILE"
+}
+
+discover_managed() {
+  if [ -n "$DATA_DIR_EXPLICIT" ]; then
+    return 0
+  fi
+  _dm_on_path=$(command -v "$APP_NAME" 2>/dev/null) || _dm_on_path=""
+  for _dm_launcher in "$_dm_on_path" "$LAUNCHER"; do
+    [ -n "$_dm_launcher" ] || continue
+    if [ -L "$_dm_launcher" ]; then
+      _dm_target=$(readlink "$_dm_launcher" 2>/dev/null) || continue
+    elif [ -f "$_dm_launcher" ] &&
+      [ "$(sed -n '1p' "$_dm_launcher" 2>/dev/null)" = '#!/bin/sh' ]; then
+      _dm_target=$(sed -n '2s/^exec "\(.*\/venv\/bin\/gputop\)" "\$@"$/\1/p' "$_dm_launcher")
+    else
+      continue
+    fi
+    case "$_dm_target" in
+      /*/venv/bin/$APP_NAME) _dm_data=${_dm_target%/venv/bin/"$APP_NAME"} ;;
+      *) continue ;;
+    esac
+    [ -f "$_dm_data/install.state" ] || continue
+    grep -q '^version=1$' "$_dm_data/install.state" 2>/dev/null || continue
+    DATA_DIR=$_dm_data
+    if [ -z "$BIN_DIR_EXPLICIT" ]; then
+      BIN_DIR=$(dirname "$_dm_launcher")
+    fi
+    apply_layout
+    detail "found managed installation in $DATA_DIR"
+    return 0
+  done
+  return 0
+}
+
+load_state_defaults() {
+  has_managed_install || return 0
+  if [ -z "$BIN_DIR_EXPLICIT" ]; then
+    _ld_bin=$(state_value bin_dir || printf '')
+    case "$_ld_bin" in
+      /*) BIN_DIR=$_ld_bin; apply_layout ;;
+    esac
+  fi
+  if [ -z "$RC_FILE_EXPLICIT" ]; then
+    _ld_rc=$(state_value rc_file || printf '')
+    case "$_ld_rc" in
+      /*) RC_FILE=$_ld_rc; STATE_RC_FILE=$_ld_rc ;;
+    esac
+  fi
+  if [ -z "$METHOD_EXPLICIT" ]; then
+    _ld_method=$(state_value method || printf '')
+    case "$_ld_method" in pip | uv) METHOD=$_ld_method ;; esac
+  fi
+  if [ -z "$REF_EXPLICIT" ]; then
+    _ld_ref=$(state_value ref || printf '')
+    [ -z "$_ld_ref" ] || REF=$_ld_ref
+  fi
+  if [ -z "$REPO_EXPLICIT" ]; then
+    _ld_repo=$(state_value repo || printf '')
+    [ -z "$_ld_repo" ] || REPO=$_ld_repo
+  fi
+  if [ -z "$SOURCE_EXPLICIT" ] && [ -z "$REF_EXPLICIT" ] && [ -z "$REPO_EXPLICIT" ]; then
+    _ld_source=$(state_value source || printf '')
+    if [ -n "$_ld_source" ] && [ -f "$_ld_source/pyproject.toml" ]; then
+      SOURCE=$_ld_source
+    fi
+  fi
 }
 
 foreign_python() {
@@ -712,14 +819,17 @@ foreign_python() {
   esac
   _fp_shebang=${_fp_line#\#!}
   _fp_shebang=${_fp_shebang%"${_fp_shebang##*[![:space:]]}"}
-  _fp_python=""
-  for _fp_word in $_fp_shebang; do
-    if [ "$_fp_word" = "env" ]; then
-      continue
-    fi
-    _fp_python=$_fp_word
-    break
-  done
+  _fp_python=${_fp_shebang%% *}
+  case "${_fp_python##*/}" in
+    env)
+      _fp_tail=${_fp_shebang#* }
+      case "$_fp_tail" in
+        -S\ *) _fp_tail=${_fp_tail#-S } ;;
+      esac
+      _fp_python=${_fp_tail%% *}
+      _fp_python=$(command -v "$_fp_python" 2>/dev/null) || return 1
+      ;;
+  esac
   [ -n "$_fp_python" ] || return 1
   [ -x "$_fp_python" ] || return 1
   "$_fp_python" -c 'import importlib.metadata as m; m.version("gputop")' >/dev/null 2>&1 || return 1
@@ -728,6 +838,9 @@ foreign_python() {
 
 foreign_is_user_owned() {
   [ -n "$1" ] || return 1
+  case "$FOREIGN_LOCATION" in
+    "$HOME_DIR"/*) return 0 ;;
+  esac
   case "$1" in
     "$HOME_DIR"/* | */venv/* | */.venv/* | */envs/* | *pyenv* | */uv/tools/*) return 0 ;;
   esac
@@ -738,6 +851,8 @@ detect_foreign() {
   FOREIGN_BIN=$(path_entry)
   FOREIGN_PYTHON=""
   FOREIGN_VERSION=""
+  FOREIGN_LOCATION=""
+  FOREIGN_SCOPE=""
   [ -n "$FOREIGN_BIN" ] || return 1
   [ "$(dirname "$FOREIGN_BIN")" = "$BIN_DIR" ] && return 1
   [ -x "$FOREIGN_BIN" ] || return 1
@@ -746,6 +861,15 @@ detect_foreign() {
     return 1
   fi
   FOREIGN_VERSION=$("$FOREIGN_PYTHON" -c 'import importlib.metadata as m; print(m.version("gputop"))' 2>/dev/null) || FOREIGN_VERSION="unknown"
+  FOREIGN_LOCATION=$("$FOREIGN_PYTHON" -c 'import importlib.metadata as m; print(m.distribution("gputop").locate_file(""))' 2>/dev/null) || FOREIGN_LOCATION=""
+  case "$FOREIGN_PYTHON" in
+    "$HOME_DIR"/*) ;;
+    *)
+      case "$FOREIGN_LOCATION" in
+        "$HOME_DIR"/*) FOREIGN_SCOPE="user" ;;
+      esac
+      ;;
+  esac
   return 0
 }
 
@@ -879,16 +1003,19 @@ write_launcher() {
   mkdir -p "$BIN_DIR"
   if [ -L "$LAUNCHER" ]; then
     _wl_target=$(readlink "$LAUNCHER" 2>/dev/null) || _wl_target=""
-    case "$_wl_target" in
-      */${APP_NAME} | */bin/${APP_NAME}) rm -f "$LAUNCHER" ;;
-      *)
-        _wl_backup=$(backup_existing "$LAUNCHER")
-        detail "moved the existing $LAUNCHER to $_wl_backup"
-        ;;
-    esac
+    if [ "$_wl_target" = "$VENV_BIN/$APP_NAME" ]; then
+      rm -f "$LAUNCHER"
+    else
+      _wl_backup=$(backup_existing "$LAUNCHER")
+      detail "moved the existing $LAUNCHER to $_wl_backup"
+    fi
   elif [ -e "$LAUNCHER" ]; then
-    _wl_backup=$(backup_existing "$LAUNCHER")
-    detail "moved the existing $LAUNCHER to $_wl_backup"
+    if launcher_is_managed; then
+      rm -f "$LAUNCHER"
+    else
+      _wl_backup=$(backup_existing "$LAUNCHER")
+      detail "moved the existing $LAUNCHER to $_wl_backup"
+    fi
   fi
   if ln -s "$VENV_BIN/${APP_NAME}" "$LAUNCHER" 2>/dev/null; then
     LAUNCHER_KIND="symlink"
@@ -905,6 +1032,17 @@ write_launcher() {
   return 0
 }
 
+launcher_is_managed() {
+  if [ -L "$LAUNCHER" ]; then
+    [ "$(readlink "$LAUNCHER" 2>/dev/null)" = "$VENV_BIN/$APP_NAME" ]
+    return
+  fi
+  [ -f "$LAUNCHER" ] || return 1
+  [ "$(sed -n '1p' "$LAUNCHER" 2>/dev/null)" = '#!/bin/sh' ] || return 1
+  _lm_command=$(printf 'exec "%s/%s" "$@"' "$VENV_BIN" "$APP_NAME")
+  [ "$(sed -n '2p' "$LAUNCHER" 2>/dev/null)" = "$_lm_command" ]
+}
+
 create_venv() {
   step "Preparing the Python environment"
   if [ "$CLEAN_VENV" = "1" ] && [ -d "$VENV_DIR" ]; then
@@ -913,12 +1051,20 @@ create_venv() {
   if has_install; then
     detail "reusing $VENV_DIR"
   else
+    case "$PYTHON" in
+      managed:*)
+        ensure_uv
+        PYTHON=$(install_managed_python)
+        ;;
+    esac
     if [ -z "$PYTHON" ] && [ "$METHOD" = "uv" ]; then
+      ensure_uv
       PYTHON=$(install_managed_python)
     fi
     [ -n "$PYTHON" ] || die "no Python interpreter is available"
     mkdir -p "$DATA_DIR"
     if [ "$METHOD" = "uv" ]; then
+      ensure_uv
       _cv_uv=$(uv_path) || die "uv is required for method uv"
       if ! "$_cv_uv" venv --quiet --python "$PYTHON" "$VENV_DIR"; then
         die "uv could not create the environment"
@@ -938,6 +1084,7 @@ create_venv() {
 install_package() {
   step "Installing $APP_NAME"
   if [ "$METHOD" = "uv" ]; then
+    ensure_uv
     _ip_uv=$(uv_path) || die "uv is required for method uv"
     if ! PIP_ROOT_USER_ACTION=ignore "$_ip_uv" pip install --quiet --python "$VENV_PY" --upgrade "$SRC_DIR"; then
       die "uv could not install $APP_NAME"
@@ -989,6 +1136,7 @@ print_plan() {
       version=*) field "version" "${_pp_key#version=}" ;;
       data=*) field "data dir" "${_pp_key#data=}" ;;
       command=*) field "command" "${_pp_key#command=}" ;;
+      location=*) field "location" "${_pp_key#location=}" ;;
       startup=*) field "shell file" "${_pp_key#startup=}" ;;
     esac
   done
@@ -1000,7 +1148,7 @@ confirm_plan() {
   if [ "$PLAN_ONLY" = "1" ]; then
     return 0
   fi
-  if [ -n "$ASSUME_YES" ] || [ ! -t 0 ]; then
+  if [ -n "$ASSUME_YES" ] || ! is_tty; then
     return 0
   fi
   confirm "Proceed?" y
@@ -1009,22 +1157,25 @@ confirm_plan() {
 choose_python_interactively() {
   printf '   %sPython interpreters found:%s\n' "$C_DIM" "$C_RESET" >&2
   _cp_index=1
-  for _cp_path in $PYTHON_CANDIDATES; do
+  printf '%s' "$PYTHON_CANDIDATES" | while IFS= read -r _cp_path; do
+    [ -n "$_cp_path" ] || continue
     printf '   %s) %s (%s)\n' "$_cp_index" "$_cp_path" "$(python_version "$_cp_path")" >&2
     _cp_index=$((_cp_index + 1))
   done
-  _cp_answer=$(ask "Interpreter" "1")
-  case "$_cp_answer" in
-    "" | *[!0-9]*) ;;
-    *)
-      _cp_selected=$(printf '%s\n' "$PYTHON_CANDIDATES" | sed -n "${_cp_answer}p")
-      if [ -n "$_cp_selected" ]; then
-        printf '%s' "$_cp_selected"
-        return 0
-      fi
-      ;;
-  esac
-  printf '%s' "$PYTHON_CANDIDATES" | head -n 1
+  _cp_count=$(printf '%s' "$PYTHON_CANDIDATES" | awk 'NF { count++ } END { print count+0 }')
+  while :; do
+    _cp_answer=$(ask "Interpreter" "1") || return 1
+    case "$_cp_answer" in
+      "" | *[!0-9]*) ;;
+      *)
+        if [ "$_cp_answer" -ge 1 ] 2>/dev/null && [ "$_cp_answer" -le "$_cp_count" ] 2>/dev/null; then
+          printf '%s\n' "$PYTHON_CANDIDATES" | sed -n "${_cp_answer}p"
+          return 0
+        fi
+        ;;
+    esac
+    printf 'Choose a number from 1 to %s.\n' "$_cp_count" >&2
+  done
 }
 
 source_label() {
@@ -1043,10 +1194,14 @@ do_install() {
     resolve_python || die "Python $MIN_PYTHON or newer is required, install it or rerun with --method uv"
   fi
   detect_rc_file
+  case "$PYTHON" in
+    managed:*) _di_python="uv-managed Python ${PYTHON#managed:} (to install)" ;;
+    *) _di_python="$PYTHON ($(python_full_version "$PYTHON"))" ;;
+  esac
   print_plan \
     "action=install $APP_NAME from $(source_label)" \
     "method=$METHOD" \
-    "python=$PYTHON ($(python_full_version "$PYTHON"))" \
+    "python=$_di_python" \
     "data=$DATA_DIR" \
     "command=$LAUNCHER" \
     "startup=$(if [ "$EDIT_PATH" = "1" ]; then printf '%s' "$RC_FILE"; else printf 'left unchanged'; fi)"
@@ -1090,7 +1245,7 @@ do_update() {
   step "Refreshing the source"
   refresh_source
   install_package
-  if [ ! -e "$LAUNCHER" ] && [ ! -L "$LAUNCHER" ]; then
+  if ! launcher_is_managed; then
     write_launcher
   fi
   setup_path
@@ -1126,13 +1281,17 @@ update_foreign() {
   if [ "$PLAN_ONLY" = "1" ]; then
     return 0
   fi
-  if [ -t 0 ] && [ -z "$ASSUME_YES" ]; then
+  if is_tty && [ -z "$ASSUME_YES" ]; then
     confirm "Update this installation in place?" y || die "cancelled"
   fi
   make_temp_dir
   fetch_source "$TMP_DIR/src"
-  if ! PIP_ROOT_USER_ACTION=ignore "$_uf_python" -m pip install --quiet --upgrade "$TMP_DIR/src"; then
-    die "pip could not update $APP_NAME in $_uf_python"
+  if [ "$FOREIGN_SCOPE" = "user" ]; then
+    PIP_ROOT_USER_ACTION=ignore "$_uf_python" -m pip install --user --quiet --upgrade "$TMP_DIR/src" ||
+      die "pip could not update $APP_NAME in $_uf_python"
+  else
+    PIP_ROOT_USER_ACTION=ignore "$_uf_python" -m pip install --quiet --upgrade "$TMP_DIR/src" ||
+      die "pip could not update $APP_NAME in $_uf_python"
   fi
   _uf_after=$("$_uf_bin" --version 2>/dev/null | awk '{print $NF}') || _uf_after="unknown"
   ok "updated: $_uf_before to $_uf_after"
@@ -1147,7 +1306,7 @@ uninstall_foreign() {
   if [ "$PLAN_ONLY" = "1" ]; then
     return 0
   fi
-  if [ -t 0 ] && [ -z "$ASSUME_YES" ]; then
+  if is_tty && [ -z "$ASSUME_YES" ]; then
     confirm "Uninstall $APP_NAME from $_un_python?" n || die "cancelled"
   fi
   if ! "$_un_python" -m pip uninstall -y "$APP_NAME"; then
@@ -1159,9 +1318,15 @@ uninstall_foreign() {
 
 do_uninstall() {
   detect_rc_file
-  _du_existing=$(path_entry)
-  if [ ! -d "$DATA_DIR" ] && [ -z "$_du_existing" ]; then
-    say "no $APP_NAME installation found"
+  if ! has_managed_install; then
+    if detect_foreign; then
+      if ! foreign_is_user_owned "$FOREIGN_PYTHON"; then
+        die "$FOREIGN_BIN belongs to an environment outside your user account, remove it with the tool that installed it"
+      fi
+      uninstall_foreign "$FOREIGN_PYTHON"
+    else
+      say "no managed $APP_NAME installation found"
+    fi
     return 0
   fi
   print_plan \
@@ -1173,17 +1338,16 @@ do_uninstall() {
     return 0
   fi
   confirm_plan || die "cancelled"
-  if [ -e "$LAUNCHER" ] || [ -L "$LAUNCHER" ]; then
+  if launcher_is_managed; then
     rm -f "$LAUNCHER"
     detail "removed $LAUNCHER"
+  elif [ -e "$LAUNCHER" ] || [ -L "$LAUNCHER" ]; then
+    warn "left $LAUNCHER in place because it is not the managed launcher"
   fi
   remove_path_block
   if [ -d "$DATA_DIR" ]; then
     rm -rf "$DATA_DIR"
     detail "removed $DATA_DIR"
-  fi
-  if detect_foreign; then
-    uninstall_foreign "$FOREIGN_PYTHON"
   fi
   ok "is uninstalled"
   say ""
@@ -1192,33 +1356,28 @@ do_uninstall() {
 
 interactive_install() {
   step "Setting up $APP_NAME"
-  if ! confirm "Install into $DATA_DIR?" y; then
-    _ii_dir=$(ask "Install directory" "$DATA_DIR")
-    if [ -z "$_ii_dir" ]; then
-      die "an install directory is required"
-    fi
-    DATA_DIR=$_ii_dir
-    apply_layout
-  fi
+  _ii_dir=$(ask "Install directory" "$DATA_DIR") || die "cancelled"
+  [ -n "$_ii_dir" ] || die "an install directory is required"
+  DATA_DIR=$_ii_dir
+  apply_layout
   if have uv; then
-    _ii_method=$(ask_choice "How should ${APP_NAME} be installed?" "pip, the standard installer" "uv, fast and able to install Python")
+    _ii_method=$(ask_choice "Installation method" 1 "uv (fast; can install Python)" "pip (standard Python installer)") || die "cancelled"
   else
-    _ii_method="1"
+    _ii_method="2"
   fi
   case "$_ii_method" in
-    2) METHOD="uv" ;;
-    *) METHOD="pip" ;;
+    1) METHOD="uv" ;;
+    2) METHOD="pip" ;;
   esac
   resolve_method
   if ! find_pythons; then
     if confirm "No Python $MIN_PYTHON+ found here. Install one with uv?" y; then
-      ensure_uv
-      PYTHON=$(install_managed_python)
+      PYTHON="managed:$MANAGED_PYTHON"
     else
       die "Python $MIN_PYTHON or newer is required"
     fi
   else
-    PYTHON=$(choose_python_interactively)
+    PYTHON=$(choose_python_interactively) || die "cancelled"
   fi
   do_install
 }
@@ -1228,16 +1387,12 @@ interactive_update() {
   field "location" "$DATA_DIR"
   field "version" "$CURRENT_VERSION"
   say ""
-  if ! confirm "Update this installation?" y; then
-    say "left the existing installation unchanged"
-    return 0
-  fi
-  _iu_method=$(state_value method || printf '')
-  if [ -n "$_iu_method" ]; then
-    METHOD=$_iu_method
-  fi
-  resolve_method
-  do_update
+  _iu_choice=$(ask_choice "What would you like to do?" 1 "Update" "Uninstall" "Cancel") || die "cancelled"
+  case "$_iu_choice" in
+    1) do_update ;;
+    2) do_uninstall ;;
+    3) say "left the existing installation unchanged" ;;
+  esac
 }
 
 main() {
@@ -1248,8 +1403,9 @@ main() {
     ACTION="install"
   fi
   apply_layout
+  discover_managed
+  load_state_defaults
   detect_local_source
-  make_temp_dir
 
   if [ "$ACTION" = "uninstall" ]; then
     do_uninstall
@@ -1273,8 +1429,9 @@ main() {
     fi
   fi
 
-  if [ -t 0 ] && [ -z "$ASSUME_YES" ] && [ "$ACTION" = "install" ] &&
-    [ -z "$PYTHON" ] && [ -z "$SOURCE" ] && [ -z "$METHOD" ] && [ "$PLAN_ONLY" = "0" ]; then
+  if is_tty && [ -z "$ASSUME_YES" ] && [ "$ACTION" = "install" ] &&
+    [ -z "$PYTHON" ] && [ -z "$SOURCE_EXPLICIT" ] &&
+    [ -z "$METHOD_EXPLICIT" ] && [ "$PLAN_ONLY" = "0" ]; then
     if has_managed_install; then
       CURRENT_VERSION=$(managed_version) || CURRENT_VERSION="unknown"
       interactive_update
@@ -1285,34 +1442,34 @@ main() {
       field "location" "$FOREIGN_BIN"
       field "version" "${FOREIGN_VERSION:-unknown}"
       say ""
-      if confirm "Update that installation?" y; then
-        if foreign_is_user_owned "$FOREIGN_PYTHON"; then
-          update_foreign "$FOREIGN_PYTHON" "$FOREIGN_BIN"
-        else
-          warn "$FOREIGN_BIN belongs to an environment outside your user account, update it with the tool that installed it"
-          warn "installing a separate copy in $DATA_DIR, run $LAUNCHER to use it"
-          do_install
-        fi
-        exit 0
-      fi
+      _mn_choice=$(ask_choice "What would you like to do?" 1 "Update existing" "Install a separate managed copy" "Cancel") || die "cancelled"
+      case "$_mn_choice" in
+        1)
+          if foreign_is_user_owned "$FOREIGN_PYTHON"; then
+            update_foreign "$FOREIGN_PYTHON" "$FOREIGN_BIN"
+          else
+            die "$FOREIGN_BIN belongs to an environment outside your user account, update it with the tool that installed it"
+          fi
+          ;;
+        2) interactive_install ;;
+        3) say "left the existing installation unchanged" ;;
+      esac
+      exit 0
     fi
     interactive_install
     exit 0
   fi
 
-  if [ "$ACTION" = "update" ] && [ -z "$METHOD" ]; then
-    _mn_method=$(state_value method || printf '')
-    if [ -n "$_mn_method" ]; then
-      METHOD=$_mn_method
-    fi
-  fi
   resolve_method
-  if ! resolve_python; then
-    die "Python $MIN_PYTHON or newer is required, install it or rerun with --method uv"
-  fi
   if [ "$ACTION" = "update" ]; then
+    if ! has_install && ! resolve_python; then
+      die "Python $MIN_PYTHON or newer is required, install it or rerun with --method uv"
+    fi
     do_update
   else
+    if ! resolve_python; then
+      die "Python $MIN_PYTHON or newer is required, install it or rerun with --method uv"
+    fi
     do_install
   fi
 }

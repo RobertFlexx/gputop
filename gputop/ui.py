@@ -25,6 +25,7 @@ class Sampler:
         self.paused = False
         self.stop = threading.Event()
         self.wake = threading.Event()
+        self.force_refresh = threading.Event()
         self.thread = threading.Thread(
             target=self._loop, name="gputop-sampler", daemon=True
         )
@@ -51,13 +52,15 @@ class Sampler:
         return self.latest()[1]
 
     def refresh(self) -> None:
+        self.force_refresh.set()
         self.wake.set()
 
     def _loop(self) -> None:
         previous_end: float | None = None
         while not self.stop.is_set():
             self.wake.clear()
-            if not self.paused:
+            if not self.paused or self.force_refresh.is_set():
+                self.force_refresh.clear()
                 started = time.monotonic()
                 try:
                     snapshot = self.collector.collect()
@@ -92,6 +95,7 @@ class App:
         self.sorts = ("GPU%", "VRAM", "PID", "NAME")
         self.filter = ""
         self.searching = False
+        self.search_original = ""
         self.show_help = False
         self.show_cores = False
         self.pending_kill: tuple[int, str, str, int, str] | None = None
@@ -506,9 +510,19 @@ class App:
             self.color(1, True),
         )
         y += 1
+        compact = width < 90
+        gpu_numbers = {item.id: index for index, item in enumerate(snapshot.gpus)}
+        gpu_column = f" {'GPU':>3}" if self.all_gpus else ""
+        if compact:
+            header = f" {'PID':>7}  {'GPU%':>6}  {'Mem':>9}{gpu_column}  Name"
+        else:
+            header = (
+                f" {'PID':>7}  {'GPU%':>6}  {'GPU ms/s':>8}  "
+                f"{'GPU Mem':>10}{gpu_column}  {'Engine':<12} Name"
+            )
         self.line(
             y,
-            f" {'PID':>7}  {'GPU%':>6}  {'GPU ms/s':>8}  {'GPU Mem':>10}  {'Engine':<12} Name",
+            header,
             self.color(6, True),
         )
         y += 1
@@ -535,10 +549,22 @@ class App:
                 if process.gpu_time_ms_s is not None
                 else "      --"
             )
-            label = (
-                f" {process.pid:>7}  {util:>6}  {gpu_ms:>8}  {size(process.memory_used):>10}  "
-                f"{process.engine[:12]:<12} {process.name}"
+            device = (
+                f" {gpu_numbers.get(process.gpu_id, '?'):>3}"
+                if self.all_gpus
+                else ""
             )
+            if compact:
+                label = (
+                    f" {process.pid:>7}  {util:>6}  {size(process.memory_used):>9}"
+                    f"{device}  {process.name}"
+                )
+            else:
+                label = (
+                    f" {process.pid:>7}  {util:>6}  {gpu_ms:>8}  "
+                    f"{size(process.memory_used):>10}{device}  "
+                    f"{process.engine[:12]:<12} {process.name}"
+                )
             self.line(
                 y + index - self.offset,
                 label,
@@ -619,7 +645,10 @@ class App:
                 self.status = "Signal cancelled."
             return True
         if self.searching:
-            if key in (10, 13, 27):
+            if key in (10, 13):
+                self.searching = False
+            elif key == 27:
+                self.filter = self.search_original
                 self.searching = False
             elif key in (curses.KEY_BACKSPACE, 127, 8):
                 self.filter = self.filter[:-1]
@@ -650,6 +679,7 @@ class App:
             self.sort_index = (self.sort_index + 1) % len(self.sorts)
             self.row = self.offset = 0
         elif key in (ord("/"), curses.KEY_F3):
+            self.search_original = self.filter
             self.searching = True
         elif key in (ord("?"), curses.KEY_F1):
             self.show_help = not self.show_help

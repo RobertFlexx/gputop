@@ -276,6 +276,27 @@ class CudaApiTests(unittest.TestCase):
 
 
 class SamplerTests(unittest.TestCase):
+    def test_refresh_collects_once_while_paused(self) -> None:
+        collected = threading.Event()
+        calls = []
+
+        def collect():
+            calls.append(1)
+            collected.set()
+            return Snapshot([GPU("gpu", "Test", "AMD")])
+
+        sampler = Sampler(SimpleNamespace(collect=collect), 60)
+        sampler.paused = True
+        sampler.start()
+        try:
+            self.assertFalse(collected.wait(0.05))
+            sampler.refresh()
+            self.assertTrue(collected.wait(2))
+            self.assertTrue(sampler.paused)
+            self.assertEqual(len(calls), 1)
+        finally:
+            sampler.close()
+
     def test_refresh_during_collection_is_not_lost_and_close_wakes_thread(self) -> None:
         entered = threading.Event()
         release = threading.Event()

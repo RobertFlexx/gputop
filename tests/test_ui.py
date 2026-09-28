@@ -88,6 +88,20 @@ class CoreViewTests(unittest.TestCase):
         app.draw()
         self.assertIn("Processes (0)", screen.text())
 
+    def test_escape_cancels_search_and_enter_applies_it(self) -> None:
+        app, _ = self.make_app(GPU("gpu:1", "Test", "AMD"))
+        app.filter = "old"
+        app.key(ord("/"))
+        app.key(ord("x"))
+        self.assertEqual(app.filter, "oldx")
+        app.key(27)
+        self.assertEqual(app.filter, "old")
+        self.assertFalse(app.searching)
+        app.key(ord("/"))
+        app.key(ord("y"))
+        app.key(10)
+        self.assertEqual(app.filter, "oldy")
+
     def test_measured_zero_and_partial_readings(self) -> None:
         gpu = GPU(
             "mac:0",
@@ -175,6 +189,23 @@ class CoreViewTests(unittest.TestCase):
         self.assertEqual([p.gpu_id for p in app._processes(snapshot, gpu)], [gpu.id])
         app.all_gpus = True
         self.assertEqual(len(app._processes(snapshot, gpu)), 2)
+
+    def test_narrow_process_table_keeps_names_and_labels_all_gpu_rows(self) -> None:
+        gpu = GPU("gpu:1", "First", "AMD")
+        other = GPU("gpu:2", "Second", "NVIDIA")
+        app, screen = self.make_app(gpu)
+        app.sampler.snapshot = Snapshot(
+            [gpu, other],
+            [
+                Process(21000, "browser", gpu.id, utilization=20),
+                Process(21001, "python-workload", other.id, utilization=12),
+            ],
+        )
+        app.draw()
+        self.assertIn("browser", screen.text())
+        app.key(ord("a"))
+        app.draw()
+        self.assertIn("  1  python-workload", screen.text())
 
     def test_process_signal_requires_confirmation_and_targets_selected_pid(self) -> None:
         gpu = GPU("gpu:1", "Test", "AMD")

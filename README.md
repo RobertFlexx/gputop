@@ -32,7 +32,7 @@ In the repo root.
 
 ---------------------------------
 
-Either installer puts a private Python environment and a `gputop` command in your user directories, never system ones, and needs no administrator rights. The command is offered to update or remove an existing install before it installs anything new, so running the command again is how you update.
+Either installer puts a private Python environment and a `gputop` command in your user directories, never system ones, and needs no administrator rights. Run the shell installer again to update or remove a detected install; it checks the active launcher, including custom install directories, and shows a menu even when run through `curl | sh`. Use `--yes` for unattended installs.
 
 Useful flags, and the environment variables that do the same thing when the script is piped:
 
@@ -80,12 +80,12 @@ No GPU handy? `python3 -m gputop --demo` opens a sample dashboard.
 | `a` | Show processes from every GPU |
 | `c` | Expand or collapse the selected GPU's core view; use `↑`/`↓` or Page Up/Page Down to scroll |
 | `s` | Cycle process sort order |
-| `/` | Search process names and PIDs |
+| `/` | Search process names and PIDs; Enter applies, Esc cancels |
 | `↑`/`↓` or `j`/`k` | Move through processes |
 | `x` or `F9` | Confirm termination of the selected process |
 | `X` | Confirm an immediate kill of the selected process |
 | `Space` | Pause sampling |
-| `r` | Refresh now |
+| `r` | Refresh now, including while paused |
 | `+`/`-` | Step through polling speeds |
 | `1`–`6` | Pick a speed directly; press `?` to see the mapping |
 | `q` | Quit |
