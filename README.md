@@ -20,6 +20,16 @@ Windows, in PowerShell:
 irm https://raw.githubusercontent.com/RobertFlexx/gputop/main/install.ps1 | iex
 ```
 
+You can literally also:
+
+```sh
+pipx install .
+```
+In the repo root.
+
+
+---------------------------------
+
 Either installer puts a private Python environment and a `gputop` command in your user directories, never system ones, and needs no administrator rights. The command is offered to update or remove an existing install before it installs anything new, so running the command again is how you update.
 
 Useful flags, and the environment variables that do the same thing when the script is piped:
