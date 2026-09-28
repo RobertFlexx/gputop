@@ -6,6 +6,41 @@ It runs on macOS, Linux and Windows. The Apple Silicon collector has been exerci
 
 Requires Python 3.10 or newer.
 
+## Install
+
+macOS, Linux and BSD:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/RobertFlexx/gputop/main/install.sh | sh
+```
+
+Windows, in PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/RobertFlexx/gputop/main/install.ps1 | iex
+```
+
+Either installer puts a private Python environment and a `gputop` command in your user directories, never system ones, and needs no administrator rights. The command is offered to update or remove an existing install before it installs anything new, so running the command again is how you update.
+
+Useful flags, and the environment variables that do the same thing when the script is piped:
+
+| Flag | Environment | What it does |
+| --- | --- | --- |
+| `-i`, `--install` | | Install gputop, the default |
+| `-u`, `--update` | | Update an install made by the script |
+| `--uninstall` | | Remove an install made by the script |
+| `-m pip`, `-m uv` | `GPUTOP_METHOD` | Choose the installer; `uv` can also provide Python |
+| `--dir PATH` | `GPUTOP_DIR` | Where the environment, source and state live |
+| `--bin-dir PATH` | `GPUTOP_BIN_DIR` | Where the `gputop` command is linked |
+| `--python PATH` | `GPUTOP_PYTHON` | Use a specific interpreter |
+| `--ref REF` | `GPUTOP_REF` | Branch, tag or commit to install, `main` by default |
+| `--source PATH` | `GPUTOP_SOURCE` | Install from a local checkout |
+| `--dry-run` | | Print the plan and change nothing |
+| `-y`, `--yes` | `GPUTOP_YES` | Never prompt |
+| `--no-path` | | Do not offer to change the shell profile or user PATH |
+
+Run the downloaded script with `--help` for the full list. `curl` and `wget` are used for downloads, `git` when it is installed, and `tar` for release archives; a source archive is fetched when `git` is missing.
+
 ## Run it
 
 From this checkout:
@@ -21,7 +56,7 @@ python3 -m pip install .
 gputop
 ```
 
-Windows needs the curses shim: `py -m pip install ".[windows]"`. Then run `py -m gputop` in Windows Terminal or PowerShell.
+Windows needs the curses shim: `py -m pip install ".[windows]"`. Then run `py -m gputop` in Windows Terminal or PowerShell. The PowerShell installer already installs that extra for you.
 
 No GPU handy? `python3 -m gputop --demo` opens a sample dashboard.
 
