@@ -13,6 +13,7 @@ The collectors live in `gputop/collectors/`:
 | `common.py` | Command execution, number parsing and size formatting |
 | `hardware.py` | Shared hardware identity and PCI vendor identifiers |
 | `amdgpu.py` | Linux AMD integrated-device flag via a bounded DRM information query |
+| `cuda.py` | NVIDIA integrated-device flag via the CUDA driver API |
 | `metal.py` | macOS registry IDs and unified-memory properties |
 | `dxcore.py` | Windows LUIDs, vendor IDs and integrated-device properties |
 

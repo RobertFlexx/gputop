@@ -4,7 +4,9 @@ import math
 import re
 import shutil
 
+from gputop.collectors import cuda
 from gputop.collectors.common import clamp, command, csv_rows, integer, number
+from gputop.collectors.hardware import pci_key
 from gputop.model import GPU, Process
 
 GPU_FIELDS = (
@@ -32,6 +34,7 @@ def collect() -> tuple[list[GPU], list[Process]]:
     if output is None:
         return [], []
     gpus: list[GPU] = []
+    kinds = cuda.kinds_by_pci()
     by_uuid: dict[str, str] = {}
     seen: set[str] = set()
     for row in csv_rows(output):
@@ -63,27 +66,27 @@ def collect() -> tuple[list[GPU], list[Process]]:
         seen.add(gpu_id)
         if uuid.startswith(("GPU-", "MIG-")):
             by_uuid[uuid] = gpu_id
-        gpus.append(
-            GPU(
-                id=gpu_id,
-                name=name,
-                vendor="NVIDIA",
-                driver="NVIDIA",
-                source="nvidia-smi",
-                utilization=clamp(number(util)),
-                memory_utilization=clamp(number(mem_util)),
-                memory_used=_mib_bytes(mem_used),
-                memory_total=_mib_bytes(mem_total),
-                temperature=number(temp),
-                power_w=number(power),
-                power_limit_w=number(limit),
-                fan_percent=clamp(number(fan)),
-                clock_mhz=number(clock),
-                notes=[
-                    "Per-process data covers compute processes reported by nvidia-smi."
-                ],
-            )
+        gpu = GPU(
+            id=gpu_id,
+            name=name,
+            vendor="NVIDIA",
+            kind=kinds.get(pci_key(pci), "unknown"),
+            driver="NVIDIA",
+            source="nvidia-smi",
+            utilization=clamp(number(util)),
+            memory_utilization=clamp(number(mem_util)),
+            memory_used=_mib_bytes(mem_used),
+            memory_total=_mib_bytes(mem_total),
+            temperature=number(temp),
+            power_w=number(power),
+            power_limit_w=number(limit),
+            fan_percent=clamp(number(fan)),
+            clock_mhz=number(clock),
+            notes=["Per-process data covers compute processes reported by nvidia-smi."],
         )
+        if gpu.kind != "unknown":
+            gpu.extras["kind_source"] = "CUDA CU_DEVICE_ATTRIBUTE_INTEGRATED"
+        gpus.append(gpu)
     processes: list[Process] = []
     output = command(
         [

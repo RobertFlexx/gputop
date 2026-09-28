@@ -82,6 +82,8 @@ No GPU handy? `python3 -m gputop --demo` opens a sample dashboard.
 | `s` | Cycle process sort order |
 | `/` | Search process names and PIDs |
 | `↑`/`↓` or `j`/`k` | Move through processes |
+| `x` or `F9` | Confirm termination of the selected process |
+| `X` | Confirm an immediate kill of the selected process |
 | `Space` | Pause sampling |
 | `r` | Refresh now |
 | `+`/`-` | Step through polling speeds |
@@ -89,6 +91,8 @@ No GPU handy? `python3 -m gputop --demo` opens a sample dashboard.
 | `q` | Quit |
 
 The function-key bar at the bottom covers the common actions. Polling can run from 0.1 to 60 seconds; the top line shows both the requested speed and the interval actually achieved.
+
+Process signals require confirmation and the same permissions as the current user. On Unix, `x` sends `SIGTERM` and `X` sends `SIGKILL`. On Windows, both keys terminate the process immediately.
 
 For scripts, use `--once` for a text snapshot or `--json` for structured data. Both take two samples so process rates have time to settle. `--interval 0.25` changes the sample period, and `--doctor` shows which sources and metrics were found.
 
@@ -98,7 +102,7 @@ For scripts, use `--once` for a text snapshot or `--json` for structured data. B
 - Apple Silicon process GPU time comes from AGX driver counters and works without root on the macOS version tested here. GPU power and clock readings from `powermetrics` need root access.
 - The Apple GPU core count is real; the “core eq est” number is an **estimate from total GPU load**. Press `c` to see individual core readings when the driver reports them. On the Apple Silicon Mac tested here, IOKit reports only aggregate load, so the core view shows `--` for each core. `--doctor` reports how many individual cores have measured readings, and `--json` exposes those readings in `core_utilization`.
 - NVIDIA process data from `nvidia-smi` covers compute jobs. Linux DRM and Windows WDDM can also show graphics processes when their counters are available.
-- Integrated versus dedicated detection uses driver metadata: AMD's APU flag on Linux, Metal's memory architecture on macOS, and DXCore on Windows. GPU model names and VRAM-size thresholds do not determine the type. If the source cannot establish it, the type is `unknown`; `--doctor` shows the evidence used.
+- Integrated versus dedicated detection uses driver metadata: AMD's APU flag on Linux, CUDA's integrated attribute for NVIDIA GPUs, Metal's memory architecture on macOS, and DXCore on Windows. GPU model names and VRAM-size thresholds do not determine the type. If the source cannot establish it, the type is `unknown`; `--doctor` shows the evidence used.
 - Multiple GPUs are tracked by hardware identifiers where available, including GPUs with identical names. The selection follows the device when inventory order changes. Expensive inventory discovery is cached for up to 60 seconds, so newly connected devices may take that long to appear with their full details.
 
 See [metric and platform notes](docs/metrics.md) if a value looks odd or a process is missing.

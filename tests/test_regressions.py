@@ -227,6 +227,33 @@ class MacRegressionTests(unittest.TestCase):
             [("AMD", "dedicated"), ("Intel", "integrated")],
         )
 
+    def test_builtin_apple_silicon_gpu_is_integrated_without_metal_inventory(self) -> None:
+        self.collector.devices = [
+            {
+                "_name": "Apple M5",
+                "spdisplays_vendor": "sppci_vendor_Apple",
+                "sppci_bus": "spdisplays_builtin",
+            }
+        ]
+        with (
+            patch.object(macos.platform, "machine", return_value="arm64"),
+            patch.object(macos, "command", return_value=""),
+        ):
+            gpus, _ = self.collector.collect()
+        self.assertEqual(gpus[0].kind, "integrated")
+        self.assertIn("Apple silicon", gpus[0].extras["kind_source"])
+
+    def test_non_apple_builtin_gpu_still_needs_type_evidence(self) -> None:
+        self.collector.devices = [
+            {"_name": "Unrecognized", "sppci_bus": "spdisplays_builtin"}
+        ]
+        with (
+            patch.object(macos.platform, "machine", return_value="arm64"),
+            patch.object(macos, "command", return_value=""),
+        ):
+            gpus, _ = self.collector.collect()
+        self.assertEqual(gpus[0].kind, "unknown")
+
     def test_ambiguous_same_vendor_statistics_are_not_assigned_to_first_gpu(
         self,
     ) -> None:
@@ -401,6 +428,31 @@ class WindowsRegressionTests(unittest.TestCase):
 
 
 class MergeRegressionTests(unittest.TestCase):
+    def test_cuda_type_fills_unknown_without_overriding_native_type(self) -> None:
+        snapshot = Snapshot(
+            [
+                GPU("0000:01:00.0", "A", "NVIDIA"),
+                GPU(
+                    "0000:02:00.0", "B", "NVIDIA", kind="integrated",
+                    extras={"kind_source": "DXCore.IsIntegrated"},
+                ),
+            ]
+        )
+        incoming = [
+            GPU(
+                "00000000:01:00.0", "A", "NVIDIA", kind="dedicated",
+                extras={"kind_source": "CUDA CU_DEVICE_ATTRIBUTE_INTEGRATED"},
+            ),
+            GPU(
+                "00000000:02:00.0", "B", "NVIDIA", kind="dedicated",
+                extras={"kind_source": "CUDA CU_DEVICE_ATTRIBUTE_INTEGRATED"},
+            ),
+        ]
+        _merge_nvidia(snapshot, incoming, [], "Linux")
+        self.assertEqual([gpu.kind for gpu in snapshot.gpus], ["dedicated", "integrated"])
+        self.assertIn("CUDA", snapshot.gpus[0].extras["kind_source"])
+        self.assertEqual(snapshot.gpus[1].extras["kind_source"], "DXCore.IsIntegrated")
+
     def test_same_name_pci_devices_keep_separate_readings_when_order_changes(
         self,
     ) -> None:

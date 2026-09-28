@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import curses
+import signal
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -51,6 +52,7 @@ class CoreViewTests(unittest.TestCase):
             interval=1.5,
             paused=False,
             refresh=lambda: None,
+            collector=SimpleNamespace(demo=False),
         )
         sampler.latest = lambda: (sampler.snapshot, sampler.revision)
         with (
@@ -173,6 +175,76 @@ class CoreViewTests(unittest.TestCase):
         self.assertEqual([p.gpu_id for p in app._processes(snapshot, gpu)], [gpu.id])
         app.all_gpus = True
         self.assertEqual(len(app._processes(snapshot, gpu)), 2)
+
+    def test_process_signal_requires_confirmation_and_targets_selected_pid(self) -> None:
+        gpu = GPU("gpu:1", "Test", "AMD")
+        app, screen = self.make_app(gpu)
+        app.sampler.snapshot.processes = [
+            Process(21001, "first", gpu.id), Process(21002, "second", gpu.id)
+        ]
+        app.draw()
+        app.row = 1
+        app.draw()
+        with patch("gputop.ui.os.kill") as kill:
+            app.key(ord("x"))
+            kill.assert_not_called()
+            app.draw()
+            self.assertIn("y confirm / other cancel: terminate PID 21002", screen.text())
+            app.key(ord("n"))
+            kill.assert_not_called()
+            app.key(curses.KEY_F9)
+            app.key(ord("y"))
+            kill.assert_called_once_with(21002, 15)
+
+    def test_signal_is_cancelled_if_target_disappears_or_changes(self) -> None:
+        gpu = GPU("gpu:1", "Test", "AMD")
+        app, _ = self.make_app(gpu)
+        app.sampler.snapshot.processes = [Process(21001, "first", gpu.id)]
+        app.draw()
+        app.key(ord("x"))
+        app.sampler.snapshot.processes = [Process(21001, "replacement", gpu.id)]
+        with patch("gputop.ui.os.kill") as kill:
+            app.key(ord("y"))
+            kill.assert_not_called()
+        self.assertIn("signal cancelled", app.status)
+
+    def test_signal_uses_highlighted_process_if_sampling_reorders_rows(self) -> None:
+        gpu = GPU("gpu:1", "Test", "AMD")
+        app, _ = self.make_app(gpu)
+        first = Process(21001, "first", gpu.id, utilization=90)
+        second = Process(21002, "second", gpu.id, utilization=10)
+        app.sampler.snapshot.processes = [first, second]
+        app.draw()
+        app.sampler.snapshot.processes = [
+            Process(21001, "first", gpu.id, utilization=10),
+            Process(21002, "second", gpu.id, utilization=90),
+        ]
+        app.key(ord("x"))
+        self.assertEqual(app.pending_kill[0], 21001)
+
+    def test_demo_and_protected_processes_cannot_be_signalled(self) -> None:
+        gpu = GPU("gpu:1", "Test", "AMD")
+        app, _ = self.make_app(gpu)
+        app.sampler.snapshot.processes = [Process(1, "init", gpu.id)]
+        app.draw()
+        app.key(ord("x"))
+        self.assertIsNone(app.pending_kill)
+        app.sampler.snapshot.processes = [Process(21001, "demo", gpu.id)]
+        app.sampler.collector.demo = True
+        app.draw()
+        app.key(ord("x"))
+        self.assertIsNone(app.pending_kill)
+
+    def test_force_kill_reports_permission_error(self) -> None:
+        gpu = GPU("gpu:1", "Test", "AMD")
+        app, _ = self.make_app(gpu)
+        app.sampler.snapshot.processes = [Process(21001, "app", gpu.id)]
+        app.draw()
+        app.key(ord("X"))
+        with patch("gputop.ui.os.kill", side_effect=PermissionError) as kill:
+            app.key(ord("y"))
+        kill.assert_called_once_with(21001, signal.SIGKILL)
+        self.assertEqual(app.status, "Permission denied for PID 21001.")
 
 
 if __name__ == "__main__":

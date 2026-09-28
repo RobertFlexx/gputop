@@ -25,6 +25,24 @@ class NvidiaTests(unittest.TestCase):
         self.assertEqual(processes[0].pid, 1234)
         self.assertEqual(processes[0].memory_used, 1024 * 1024**2)
 
+    def test_nvidia_type_uses_cuda_pci_identity_not_gpu_name(self) -> None:
+        gpu_csv = (
+            "0, GPU-1, Unrecognized A, 00000000:01:00.0, 42, 12, 2048, 8192, 63, 150, 250, 44, 1800\n"
+            "1, GPU-2, Unrecognized B, 00000000:02:00.0, 42, 12, 2048, 8192, 63, 150, 250, 44, 1800\n"
+        )
+        with (
+            patch.object(nvidia.shutil, "which", return_value="/bin/nvidia-smi"),
+            patch.object(nvidia, "command", side_effect=[gpu_csv, ""]),
+            patch.object(
+                nvidia.cuda,
+                "kinds_by_pci",
+                return_value={"0:1:0:0": "dedicated", "0:2:0:0": "integrated"},
+            ),
+        ):
+            gpus, _ = nvidia.collect()
+        self.assertEqual([gpu.kind for gpu in gpus], ["dedicated", "integrated"])
+        self.assertTrue(all("CUDA" in gpu.extras["kind_source"] for gpu in gpus))
+
 
 class LinuxTests(unittest.TestCase):
     def test_fdinfo_deltas_are_process_and_engine_utilization(self) -> None:

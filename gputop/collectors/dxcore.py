@@ -17,6 +17,7 @@ class Property(IntEnum):
     INSTANCE_LUID = 0
     DRIVER_DESCRIPTION = 2
     HARDWARE_ID = 3
+    DEDICATED_ADAPTER_MEMORY = 7
     IS_HARDWARE = 11
     IS_INTEGRATED = 12
 
@@ -95,8 +96,18 @@ def _read_adapter(adapter) -> HardwareAdapter | None:
             name = buffer.value.decode("utf-8", errors="replace")
     integrated = ct.c_bool()
     kind = "unknown"
+    kind_source = ""
     if _property(adapter, Property.IS_INTEGRATED, integrated):
         kind = "integrated" if integrated.value else "dedicated"
+        kind_source = "DXCore.IsIntegrated"
+    else:
+        dedicated = ct.c_uint64()
+        if (
+            _property(adapter, Property.DEDICATED_ADAPTER_MEMORY, dedicated)
+            and dedicated.value
+        ):
+            kind = "dedicated"
+            kind_source = "DXCore.DedicatedAdapterMemory"
     hardware_id = HardwareID()
     vendor_id = (
         hardware_id.vendor
@@ -104,7 +115,7 @@ def _read_adapter(adapter) -> HardwareAdapter | None:
         else None
     )
     identity = f"0x{luid.high:08x}_0x{luid.low:08x}"
-    return HardwareAdapter(identity, name or f"GPU {identity}", kind, vendor_id)
+    return HardwareAdapter(identity, name or f"GPU {identity}", kind, vendor_id, kind_source)
 
 
 def adapters() -> list[HardwareAdapter]:

@@ -8,7 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from gputop.collectors import amdgpu, dxcore, metal
+from gputop.collectors import amdgpu, cuda, dxcore, metal
 from gputop.collectors.hardware import HardwareAdapter
 from gputop.model import GPU, Snapshot
 from gputop.ui import Sampler
@@ -161,9 +161,31 @@ class DxcoreApiTests(unittest.TestCase):
             self.assertEqual(
                 info,
                 HardwareAdapter(
-                    "0x00000003_0x00000007", "Arbitrary AMD name", expected, 0x1002
+                    "0x00000003_0x00000007", "Arbitrary AMD name", expected, 0x1002,
+                    "DXCore.IsIntegrated" if integrated is not None else "",
                 ),
             )
+
+    def test_dedicated_memory_fallback_when_integrated_flag_is_unavailable(self) -> None:
+        def prop(adapter, key, value):
+            if key == dxcore.Property.IS_HARDWARE:
+                value.value = True
+            elif key == dxcore.Property.INSTANCE_LUID:
+                value.low, value.high = 7, 3
+            elif key == dxcore.Property.IS_INTEGRATED:
+                return False
+            elif key == dxcore.Property.DEDICATED_ADAPTER_MEMORY:
+                value.value = 24 * 1024**3
+            return True
+
+        with (
+            patch.object(dxcore, "_property", side_effect=prop),
+            patch.object(dxcore, "_method", return_value=lambda *args: -1),
+        ):
+            info = dxcore._read_adapter(ct.c_void_p(1))
+        self.assertEqual(info.kind, "dedicated")
+        self.assertEqual(info.kind_source, "DXCore.DedicatedAdapterMemory")
+
 
     def test_enumeration_deduplicates_apis_and_releases_every_interface(self) -> None:
         released = []
@@ -217,6 +239,40 @@ class DxcoreApiTests(unittest.TestCase):
             patch.object(dxcore.ct, "WinDLL", side_effect=OSError(), create=True),
         ):
             self.assertEqual(dxcore.adapters(), [])
+
+
+class CudaApiTests(unittest.TestCase):
+    def test_integrated_flag_is_matched_by_pci_identity(self) -> None:
+        def _write_pci(output, device):
+            value = f"0000:0{device + 1}:00.0".encode() + b"\0"
+            ct.memmove(output, value, len(value))
+            return 0
+
+        class FakeFunction:
+            def __init__(self, callback):
+                self.callback = callback
+
+            def __call__(self, *args):
+                return self.callback(*args)
+
+        library = SimpleNamespace(
+            cuInit=FakeFunction(lambda flags: 0),
+            cuDeviceGetCount=FakeFunction(
+                lambda output: setattr(output._obj, "value", 2) or 0
+            ),
+            cuDeviceGet=FakeFunction(
+                lambda output, index: setattr(output._obj, "value", index) or 0
+            ),
+            cuDeviceGetAttribute=FakeFunction(
+                lambda output, attr, device: setattr(output._obj, "value", device) or 0
+            ),
+            cuDeviceGetPCIBusId=FakeFunction(
+                lambda output, length, device: _write_pci(output, device)
+            ),
+        )
+        with patch.object(cuda.ct, "CDLL", return_value=library):
+            result = cuda._query()
+        self.assertEqual(result, {"0:1:0:0": "dedicated", "0:2:0:0": "integrated"})
 
 
 class SamplerTests(unittest.TestCase):

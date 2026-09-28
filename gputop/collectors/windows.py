@@ -74,7 +74,7 @@ def parse(
             source="DXCore + WDDM counters",
         )
         if info.kind != "unknown":
-            gpu.extras["kind_source"] = "DXCore.IsIntegrated"
+            gpu.extras["kind_source"] = info.kind_source or "DXCore.IsIntegrated"
         gpus.append(gpu)
         luid_map[info.id] = gpu
     remaining_names = Counter(gpu.name.casefold() for gpu in gpus)

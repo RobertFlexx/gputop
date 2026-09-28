@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import curses
+import os
 import re
+import signal
 import threading
 import time
 from collections import defaultdict, deque
@@ -11,6 +13,7 @@ from gputop.collectors.manager import Collector
 from gputop.model import GPU, Process, Snapshot
 
 SPEEDS = (0.1, 0.25, 0.5, 1.0, 1.5, 2.0, 5.0, 10.0, 30.0, 60.0)
+FORCE_SIGNAL = getattr(signal, "SIGKILL", signal.SIGTERM)
 
 
 class Sampler:
@@ -91,6 +94,9 @@ class App:
         self.searching = False
         self.show_help = False
         self.show_cores = False
+        self.pending_kill: tuple[int, str, str, int, str] | None = None
+        self.displayed_process: tuple[int, str, str] | None = None
+        self.status = ""
         self.core_offset = 0
         self.row = 0
         self.offset = 0
@@ -202,6 +208,45 @@ class App:
             return sorted(processes, key=lambda p: p.pid)
         return sorted(processes, key=lambda p: p.name.casefold())
 
+    def _selected_process(self) -> Process | None:
+        snapshot = self.sampler.snapshot
+        if self.show_cores or self.displayed_process is None:
+            return None
+        pid, name, gpu_id = self.displayed_process
+        return next(
+            (
+                p
+                for p in snapshot.processes
+                if p.pid == pid and p.name == name and p.gpu_id == gpu_id
+            ),
+            None,
+        )
+
+    def _confirm_kill(self) -> None:
+        pending = self.pending_kill
+        self.pending_kill = None
+        if pending is None:
+            return
+        pid, name, gpu_id, sig, action = pending
+        snapshot = self.sampler.snapshot
+        if not any(
+            p.pid == pid and p.name == name and p.gpu_id == gpu_id
+            for p in snapshot.processes
+        ):
+            self.status = f"PID {pid} is no longer in the GPU process list; signal cancelled."
+            return
+        try:
+            os.kill(pid, sig)
+        except ProcessLookupError:
+            self.status = f"PID {pid} has already exited."
+        except PermissionError:
+            self.status = f"Permission denied for PID {pid}."
+        except OSError as exc:
+            self.status = f"Could not signal PID {pid}: {exc}"
+        else:
+            self.status = f"Sent {action} to PID {pid}."
+            self.sampler.refresh()
+
     def _core_rows(self, gpu: GPU) -> list[tuple[str, float | None]]:
         readings = {}
         for name, value in gpu.core_utilization.items():
@@ -275,6 +320,7 @@ class App:
 
     def draw(self) -> None:
         self.screen.erase()
+        self.displayed_process = None
         snapshot, revision = self.sampler.latest()
         height, width = self.screen.getmaxyx()
         gpu = self._selected_gpu(snapshot)
@@ -468,6 +514,9 @@ class App:
         y += 1
         rows = max(0, height - y - 3)
         self.row = min(max(0, self.row), max(0, len(processes) - 1))
+        if processes:
+            chosen = processes[self.row]
+            self.displayed_process = (chosen.pid, chosen.name, chosen.gpu_id)
         if self.row < self.offset:
             self.offset = self.row
         if self.row >= self.offset + rows and rows:
@@ -534,29 +583,41 @@ class App:
             note = (
                 "Speeds: 1=0.1s  2=0.25s  3=0.5s  4=1s  5=1.5s  6=2s; +/- step further"
             )
+        if self.status:
+            note = self.status
+        if self.pending_kill:
+            pid, name, _, _, action = self.pending_kill
+            note = f"y confirm / other cancel: {action} PID {pid} ({name})"
         self.line(height - 3, " " + note, self.color(3))
         if self.searching:
             self.line(height - 2, " Search: " + self.filter + "_", self.color(3, True))
         elif self.show_help:
             self.line(
                 height - 2,
-                " Tab GPU  c cores  a all  s sort  / search  ↑↓ select  +/- speed  Space pause  q quit",
+                " Tab GPU  a all  s sort  / search  x terminate  X kill  ↑↓ select  ? help  q quit",
                 self.color(3),
             )
         else:
             self.line(
                 height - 2,
-                " Tab GPU  c cores  a all  s sort  / search  ↑↓ select  +/- speed  ? help  q quit",
+                " Tab GPU  a all  s sort  / search  x terminate  X kill  ↑↓ select  ? help  q quit",
                 self.color(6),
             )
         self.line(
             height - 1,
-            " F1 Help    F2 Sort    F3 Search    F4 All GPUs    F5 Refresh    F10 Quit",
+            " F1 Help    F2 Sort    F3 Search    F4 All GPUs    F5 Refresh    F9 Term    F10 Quit",
             curses.A_REVERSE,
         )
         self.screen.refresh()
 
     def key(self, key: int) -> bool:
+        if self.pending_kill:
+            if key in (ord("y"), ord("Y")):
+                self._confirm_kill()
+            else:
+                self.pending_kill = None
+                self.status = "Signal cancelled."
+            return True
         if self.searching:
             if key in (10, 13, 27):
                 self.searching = False
@@ -566,6 +627,7 @@ class App:
                 self.filter += chr(key)
             self.row = self.offset = 0
             return True
+        self.status = ""
         if key in (ord("q"), ord("Q"), curses.KEY_F10):
             return False
         if key in (9, curses.KEY_RIGHT):
@@ -591,6 +653,22 @@ class App:
             self.searching = True
         elif key in (ord("?"), curses.KEY_F1):
             self.show_help = not self.show_help
+        elif key in (ord("x"), ord("X"), curses.KEY_F9):
+            process = self._selected_process()
+            if process is None:
+                self.status = "Select a process to signal."
+            elif getattr(getattr(self.sampler, "collector", None), "demo", False):
+                self.status = "Demo processes cannot be signalled."
+            elif process.pid <= 1 or process.pid in (os.getpid(), os.getppid()):
+                self.status = f"Refusing to signal protected PID {process.pid}."
+            else:
+                force = key == ord("X")
+                sig = FORCE_SIGNAL if force else signal.SIGTERM
+                action = "kill" if force else "terminate"
+                self.pending_kill = (
+                    process.pid, process.name, process.gpu_id, sig, action
+                )
+                self.status = ""
         elif key in (curses.KEY_DOWN, ord("j")):
             if self.show_cores:
                 self.core_offset += 1

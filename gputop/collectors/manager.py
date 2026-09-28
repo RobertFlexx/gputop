@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import math
 import platform
-import re
 import time
 from collections import Counter, defaultdict
 
 from gputop.collectors import nvidia
+from gputop.collectors.hardware import pci_key
 from gputop.model import GPU, Process, Snapshot
 
 _GPU_FIELDS = (
@@ -24,15 +24,6 @@ _GPU_FIELDS = (
 )
 
 
-def _pci_key(value: str) -> str:
-    match = re.fullmatch(
-        r"([0-9a-f]{4,8}):([0-9a-f]{2}):([0-9a-f]{2})\.([0-7])", value.lower()
-    )
-    if match:
-        return ":".join(f"{int(part, 16):x}" for part in match.groups())
-    return value.casefold()
-
-
 def _source(old: str, new: str) -> str:
     return " + ".join(
         dict.fromkeys(part for part in (old + " + " + new).split(" + ") if part)
@@ -45,14 +36,14 @@ def _merge_nvidia(
     existing: dict[str, list[GPU]] = defaultdict(list)
     by_name: dict[str, list[GPU]] = defaultdict(list)
     for gpu in snapshot.gpus:
-        existing[_pci_key(gpu.id)].append(gpu)
+        existing[pci_key(gpu.id)].append(gpu)
         if gpu.vendor == "NVIDIA":
             by_name[gpu.name.casefold()].append(gpu)
     name_counts = Counter(gpu.name.casefold() for gpu in gpus)
     remap: dict[str, str] = {}
     matched: set[str] = set()
     for incoming in gpus:
-        candidates = existing.get(_pci_key(incoming.id), [])
+        candidates = existing.get(pci_key(incoming.id), [])
         if (
             not candidates
             and os_name == "Windows"
@@ -73,8 +64,10 @@ def _merge_nvidia(
             value = getattr(incoming, field)
             if value is not None:
                 setattr(old, field, value)
-        if incoming.kind != "unknown":
+        if old.kind == "unknown" and incoming.kind != "unknown":
             old.kind = incoming.kind
+            if "kind_source" in incoming.extras:
+                old.extras["kind_source"] = incoming.extras["kind_source"]
         old.source = _source(old.source, incoming.source)
         old.notes = list(dict.fromkeys(old.notes + incoming.notes))
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import platform
 import re
 import time
 from collections import Counter
@@ -180,6 +181,20 @@ def _profiler_vendor(info: dict) -> str:
     value = str(info.get("spdisplays_vendor-id") or info.get("spdisplays_vendor") or "")
     match = re.search(r"0x[0-9a-fA-F]+", value)
     return pci_vendor(match.group()) if match else _vendor(value)
+
+
+def _profiler_kind(info: dict) -> tuple[str, str]:
+    if info.get("spdisplays_vram_shared") is not None:
+        return "integrated", "system_profiler shared memory"
+    if info.get("spdisplays_vram") is not None:
+        return "dedicated", "system_profiler VRAM"
+    if (
+        platform.machine() == "arm64"
+        and _profiler_vendor(info) == "Apple"
+        and info.get("sppci_bus") == "spdisplays_builtin"
+    ):
+        return "integrated", "system_profiler built-in Apple silicon GPU"
+    return "unknown", ""
 
 
 def _registry_id(segment: str) -> str | None:
@@ -383,11 +398,13 @@ class MacCollector:
                 if len(matches) == 1 and remaining_names[hardware.name.casefold()] == 1
                 else {}
             )
+            fallback_kind, fallback_source = _profiler_kind(info)
+            kind = hardware.kind if hardware.kind != "unknown" else fallback_kind
             gpu = GPU(
                 id=f"mac:{hardware.id}",
                 name=hardware.name,
                 vendor=_profiler_vendor(info),
-                kind=hardware.kind,
+                kind=kind,
                 driver="Metal/IOKit",
                 source="Metal + IOKit",
                 core_count=integer(
@@ -395,8 +412,12 @@ class MacCollector:
                 ),
             )
             gpu.extras["registry_id"] = hardware.id
-            if hardware.kind != "unknown":
-                gpu.extras["kind_source"] = "Metal.hasUnifiedMemory"
+            if kind != "unknown":
+                gpu.extras["kind_source"] = (
+                    "Metal.hasUnifiedMemory"
+                    if hardware.kind != "unknown"
+                    else fallback_source
+                )
             gpus.append(gpu)
             profiler_info[gpu.id] = info
         for index, info in enumerate(self.devices):
@@ -408,15 +429,7 @@ class MacCollector:
                 continue
             # Preserve devices that do not support Metal. System Profiler's
             # explicit shared-memory field distinguishes these from VRAM.
-            kind = (
-                "integrated"
-                if info.get("spdisplays_vram_shared") is not None
-                else (
-                    "dedicated"
-                    if info.get("spdisplays_vram") is not None
-                    else "unknown"
-                )
-            )
+            kind, kind_source = _profiler_kind(info)
             gpu = GPU(
                 id=f"mac:{index}",
                 name=name,
@@ -429,7 +442,7 @@ class MacCollector:
                 ),
             )
             if kind != "unknown":
-                gpu.extras["kind_source"] = "system_profiler memory type"
+                gpu.extras["kind_source"] = kind_source
             gpus.append(gpu)
             profiler_info[gpu.id] = info
         if not gpus:
