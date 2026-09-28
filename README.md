@@ -27,6 +27,8 @@ pipx install .
 ```
 In the repo root.
 
+> (if you have pipx.)
+
 
 ---------------------------------
 
